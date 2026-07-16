@@ -1,6 +1,19 @@
 # Creator email lookup API contract
 
-## Request
+## Contents
+
+- [Endpoint and authentication](#endpoint-and-authentication)
+- [Request](#request)
+- [Supported URLs](#supported-urls)
+- [Bundled-script boundary](#bundled-script-boundary)
+- [Response](#response)
+- [Public-data and nullable semantics](#public-data-and-nullable-semantics)
+- [Quota and charging](#quota-and-charging)
+- [Errors](#errors)
+- [Request correlation](#request-correlation)
+- [Bundled-script errors](#bundled-script-errors)
+
+## Endpoint and authentication
 
 ```text
 POST https://api.wavely.cc/api/v1/email-lookup
@@ -8,11 +21,15 @@ X-WaveInflu-Api-Key: $WAVEINFLU_API_KEY
 Content-Type: application/json
 ```
 
-This is a synchronous, quota-charging POST with no idempotency key. Never retry it automatically.
+Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. Keep the key in the environment; a valid issued key has the `waveInflu_` prefix followed by 40 URL-safe characters.
 
-The bundled script accepts exactly one `url`, converts supported profile variants to a canonical URL, sends one request, rejects redirects, and limits response size. `WAVEINFLU_API_BASE_URL` is restricted to loopback hosts for local tests and must remain unset in normal use.
+To issue a key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new key immediately. The full value is shown only once. Set it as `WAVEINFLU_API_KEY` in the environment that launches the Agent; never paste it into chat.
 
-The request body accepts exactly one supported creator profile URL:
+This is a synchronous, quota-charging POST. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically.
+
+## Request
+
+The Skill accepts exactly one creator profile per invocation:
 
 ```json
 {
@@ -20,9 +37,41 @@ The request body accepts exactly one supported creator profile URL:
 }
 ```
 
-Supported platforms are Instagram, TikTok, and YouTube. Handles or display names without a profile URL are not accepted.
+The API field is a trimmed, non-empty string up to 2,048 characters. A display name, bare handle, search query, list, or export is not a valid Skill input. The URL may omit its protocol or use HTTP; the bundled script normalizes every accepted identity to a canonical HTTPS profile URL before submission.
+
+## Supported URLs
+
+The backend and bundled script recognize these platform identities and return a canonical `profileLink`:
+
+| Platform | Backend-recognized identity | Canonical form |
+|---|---|---|
+| Instagram | First non-reserved path segment on `instagram.com`, `www.instagram.com`, or `m.instagram.com`; an optional leading `@` is removed and later path segments may be present. | `https://www.instagram.com/{username}/` |
+| TikTok | First path segment beginning with `@` on `tiktok.com`, `www.tiktok.com`, or `m.tiktok.com`; `/@user/video/...` is accepted. | `https://www.tiktok.com/@{uniqueId}` |
+| YouTube | `/@handle`, `/channel/{id}`, `/c/{name}`, or `/user/{name}` on `youtube.com`, `www.youtube.com`, or `m.youtube.com`; later path segments may be present. | Matching canonical `www.youtube.com` profile form. |
+
+Input such as `instagram.com/example/reels`, `http://www.tiktok.com/@example/video/123`, or `youtube.com/@example/videos` identifies one account and is normalized to that account's HTTPS profile. A content URL does not turn this into a content lookup; the quota-charging operation still targets one creator profile.
+
+## Bundled-script boundary
+
+The bundled script preserves the backend's safely identifiable URL range while preventing an Agent from charging the wrong identity:
+
+- Require one JSON object with exactly one field, `url`.
+- Accept a missing protocol or HTTP input and normalize it to HTTPS; reject credentials and custom ports.
+- Resolve Instagram from the first username path segment, including an optional leading `@` and URLs with later segments; require a 1–30 character Instagram username made of letters, digits, dot, or underscore, and reject reserved non-account first segments such as `p`, `reel`, `stories`, or `explore`.
+- Resolve TikTok from the first `/@uniqueId` segment, including `/@user/video/...`; reject discovery URLs that do not identify an account and reject unsafe identity delimiters or control characters.
+- Resolve YouTube from `/@handle`, `/channel/{id}`, `/c/{name}`, or `/user/{name}`, including later path segments. Unicode identities are preserved; unsafe identity delimiters and control characters are rejected.
+- Reject YouTube `/watch` and `youtu.be` URLs because they do not directly encode the creator identity required by this lookup.
+- Canonicalize supported bare, `www.`, and `m.` hosts before submission.
+- Require Node.js 22 or newer and the exact issued API-key format.
+- Rebuild the body, make exactly one POST, reject redirects, limit response size, and never retry.
+
+If the script cannot safely identify one creator from the URL, ask the user for that creator's profile URL. Do not bypass the script or guess from a content ID.
+
+`WAVEINFLU_API_BASE_URL` is only a local-test override and is restricted to loopback hosts. Leave it unset in normal use.
 
 ## Response
+
+Success uses the standard envelope:
 
 ```json
 {
@@ -36,7 +85,12 @@ Supported platforms are Instagram, TikTok, and YouTube. Handles or display names
     "region": "US",
     "email": "business@example.com",
     "emails": ["business@example.com"],
-    "contacts": [],
+    "contacts": [
+      {
+        "url": "https://example.com/contact",
+        "type": "website"
+      }
+    ],
     "quota": {
       "cost": 2,
       "remainingQuota": 48
@@ -45,32 +99,73 @@ Supported platforms are Instagram, TikTok, and YouTube. Handles or display names
 }
 ```
 
-`email`, `username`, `platformUserId`, and `region` can be `null`. `emails` and `contacts` can be empty. An empty email result is still a successful paid lookup.
+| Field | Type | Meaning |
+|---|---|---|
+| `platform` | `instagram \| tiktok \| youtube` | Platform parsed from the submitted profile. |
+| `username` | `string \| null` | Username returned by the lookup provider, when available. |
+| `profileLink` | string | Canonical profile URL used for lookup. |
+| `platformUserId` | `string \| null` | Platform-specific immutable ID when available. |
+| `region` | `string \| null` | Creator region when available. |
+| `email` | `string \| null` | Primary discovered public email, or `null`. |
+| `emails` | string[] | Trimmed, deduplicated discovered emails; can be empty. |
+| `contacts` | object[] | Discovered contact links; can be empty. |
+| `contacts[].url` | string | Non-empty external contact URL. |
+| `contacts[].type` | string | Provider contact type; missing/blank provider values normalize to `website`. |
+| `quota.cost` | number | Email credits charged for this lookup. |
+| `quota.remainingQuota` | number | Separate email quota remaining after the charge. |
 
-## Quota
+## Public-data and nullable semantics
 
-- TikTok: 1 email credit.
-- Instagram: 2 email credits.
-- YouTube: 2 email credits.
+- `email: null` means no primary public email was found. It is not a transport failure.
+- `emails: []` means the provider returned no usable email list. The array is independently normalized and is not guaranteed to mirror `email` exactly.
+- `contacts: []` means no usable public contact links were returned.
+- `username`, `platformUserId`, and `region` may also be `null` without making the lookup fail.
+- Returned data is publicly discoverable contact data. WaveInflu does not prove address ownership, consent, deliverability, or authorization to contact the person.
 
-Use `data.quota.cost` and `data.quota.remainingQuota` as the final server-provided values.
+Never infer, synthesize, or guess a private/personal address from these fields.
+
+## Quota and charging
+
+Email lookup uses a separate email quota, not creator-discovery main quota.
+
+| Platform | Fixed cost |
+|---|---:|
+| TikTok | 1 email credit |
+| Instagram | 2 email credits |
+| YouTube | 2 email credits |
+
+The service parses the URL first, then atomically consumes the fixed platform cost before starting the lookup:
+
+- Missing or unsupported URLs are rejected before charge.
+- Insufficient email quota does not consume quota and the provider is not called.
+- Any successful response consumes the full fixed cost, including `email: null`, `emails: []`, or `contacts: []`.
+- If the lookup pipeline throws after consumption, the service calls the email-quota refund before returning the error. A client timeout or network failure still makes the observed quota outcome unknown.
+
+Always report the server-returned `quota.cost` and `quota.remainingQuota` as final.
 
 ## Errors
 
-| HTTP | Meaning | Agent action |
-|---|---|---|
-| 400 | Missing or unsupported profile URL | Ask for a supported profile URL. Do not guess an account. |
-| 401 | Missing, invalid, or revoked API key | Ask the user to configure or replace the environment variable outside chat. |
-| 403 | Insufficient email quota | Report the email quota error; do not confuse it with creator-discovery quota. |
-| 429 | Rate limited | Report `Retry-After` if available; do not schedule an automatic retry. |
-| 500+ | Lookup pipeline failure | Report the error; do not retry automatically. |
+Error responses normally use `{ "code": number, "message": string, "error": ... }`. Messages can be localized; use HTTP status, business code, and safe error details.
 
-## Bundled script errors
+| HTTP | Meaning | Charging semantics | Agent action |
+|---|---|---|---|
+| 400 | Missing or unsupported creator URL | Rejected before quota consumption. | Ask for one supported URL that directly identifies the creator; do not guess or auto-resubmit. |
+| 401 | Missing, invalid, or revoked API key | Auth fails before quota consumption. | Configure or replace `WAVEINFLU_API_KEY` outside chat. |
+| 403 | Insufficient email quota | No quota consumed and no lookup started. | Report the separate email-quota shortage. |
+| 500+ | Lookup/provider/refund pipeline failure | The service attempts a refund after a post-consumption lookup failure; client-observed outcome may still be unknown. | Report the safe error and do not retry automatically. |
 
-Errors are written as JSON to stderr with a non-zero exit code. `autoRetryAllowed` is always `false`.
+HTTP 429 is not currently a documented per-key contract for this route. Handle it defensively if an edge or future service returns it: report `Retry-After` when available and do not schedule or perform a retry.
 
-- `requestSent: false`: local validation failed before any API submission.
-- `requestSent: true`: the server received the request, but returned an HTTP or response error.
-- `requestSent: "unknown"`: a timeout, redirect rejection, or network failure occurred after the request attempt began.
+## Request correlation
 
-Only `requestSent: false` is safe to correct locally without risking a duplicate charge. V1 still permits only one creator profile per invocation.
+The script sends a random `X-Request-Id` for support correlation and application responses normally echo it. Unlike creator discovery, email success data does not contain a `requestId` body field. On an HTTP/read/validation failure, the script surfaces the echoed or locally generated ID as top-level `requestId`; successful stdout remains the validated JSON body only. This ID is diagnostic only and does not make the request idempotent.
+
+## Bundled-script errors
+
+The script writes structured JSON to stderr, exits non-zero, and always sets `autoRetryAllowed: false`.
+
+- `requestSent: false`: local validation failed before any POST. Ask for or correct the canonical URL without changing the target profile.
+- `requestSent: true`: the API returned an HTTP error or an unreadable/invalid response after the POST.
+- `requestSent: "unknown"`: the request attempt encountered a timeout, redirect, or network failure; it may have reached the API and charged quota.
+
+Only `requestSent: false` is safe to correct without duplicate-charge risk. V1 still permits one creator profile per invocation.

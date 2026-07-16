@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto';
+
 const DEFAULT_API_ORIGIN = 'https://api.wavely.cc';
 const API_PATH = '/api/v1/email-lookup';
 const MAX_INPUT_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
-const CLIENT_VERSION = '0.1.0';
+const CLIENT_VERSION = '0.2.0';
 const API_KEY_PATTERN = /^waveInflu_[A-Za-z0-9_-]{40}$/;
 const RESERVED_INSTAGRAM_PATHS = new Set([
   'p',
@@ -64,6 +66,24 @@ const readInput = async () => {
   }
 };
 
+const safeIdentity = (value, field, maxLength = 100) => {
+  if (!value) throw new InputError(`${field} is missing from the creator URL.`);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new InputError(`${field} contains invalid URL encoding.`);
+  }
+  if (
+    !decoded ||
+    decoded.length > maxLength ||
+    /[\u0000-\u001f\u007f/\\?#]/u.test(decoded)
+  ) {
+    throw new InputError(`${field} is not a valid creator identity.`);
+  }
+  return value;
+};
+
 const canonicalProfileUrl = (raw) => {
   if (typeof raw !== 'string' || !raw.trim() || raw.length > 2_048) {
     throw new InputError('url must be a non-empty creator profile URL no longer than 2048 characters.');
@@ -74,73 +94,61 @@ const canonicalProfileUrl = (raw) => {
 
   let url;
   try {
-    url = new URL(raw.trim());
-  } catch {
-    throw new InputError('url must be a valid HTTPS creator profile URL.');
+    const input = raw.trim();
+    if (/[\u0000-\u001f\u007f]/u.test(input)) {
+      throw new InputError('url must not contain control characters.');
+    }
+    url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+  } catch (error) {
+    if (error instanceof InputError) throw error;
+    throw new InputError('url must identify an Instagram, TikTok, or YouTube creator.');
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port) {
-    throw new InputError('url must be a valid HTTPS creator profile URL.');
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) {
+    throw new InputError('url must not contain credentials, a custom port, or a non-HTTP scheme.');
   }
 
   const host = url.hostname.replace(/^www\./, '').toLowerCase();
   const segments = url.pathname.split('/').filter(Boolean);
   if (host === 'instagram.com' || host === 'm.instagram.com') {
-    const username = segments[0];
+    const username = segments[0]?.replace(/^@/, '');
     if (
-      segments.length !== 1 ||
       !username ||
       !/^[A-Za-z0-9._]{1,30}$/.test(username) ||
       RESERVED_INSTAGRAM_PATHS.has(username.toLowerCase())
     ) {
-      throw new InputError('url must be an Instagram creator profile URL, not a post or reel.');
+      throw new InputError('url must identify an Instagram creator, not a post or Reel.');
     }
     return `https://www.instagram.com/${username}/`;
   }
 
   if (host === 'tiktok.com' || host === 'm.tiktok.com') {
     const segment = segments[0];
-    const username = segment?.startsWith('@') ? segment.slice(1) : '';
-    if (segments.length !== 1 || !/^[A-Za-z0-9._-]{1,30}$/.test(username)) {
-      throw new InputError('url must be a TikTok creator profile URL, not a video or discovery page.');
-    }
+    if (!segment?.startsWith('@')) throw new InputError('url must include a TikTok @username.');
+    const username = safeIdentity(segment.slice(1), 'TikTok username');
     return `https://www.tiktok.com/@${username}`;
   }
 
   if (host === 'youtube.com' || host === 'm.youtube.com') {
-    const [first, second, third, ...rest] = segments;
-    const profileTabs = new Set([
-      'videos',
-      'shorts',
-      'streams',
-      'about',
-      'featured',
-      'community',
-      'playlists',
-    ]);
-    if (rest.length || (third && !profileTabs.has(third))) {
-      throw new InputError('url must be a YouTube creator profile or channel URL.');
+    const [first, second] = segments;
+    if (first?.startsWith('@')) {
+      return `https://www.youtube.com/@${safeIdentity(first.slice(1), 'YouTube handle')}`;
     }
-    if (/^@[A-Za-z0-9._-]{3,30}$/.test(first ?? '') && (!second || profileTabs.has(second))) {
-      return `https://www.youtube.com/${first}`;
+    if (first === 'channel') {
+      const channelId = safeIdentity(
+        second?.replace(/^@/, ''),
+        'YouTube channel ID',
+        200,
+      );
+      return `https://www.youtube.com/channel/${channelId}`;
     }
-    if (
-      first === 'channel' &&
-      /^UC[A-Za-z0-9_-]{6,}$/.test(second ?? '') &&
-      (!third || profileTabs.has(third))
-    ) {
-      return `https://www.youtube.com/channel/${second}`;
+    if (first === 'c' || first === 'user') {
+      const creatorName = safeIdentity(second?.replace(/^@/, ''), 'YouTube creator name');
+      return `https://www.youtube.com/${first}/${creatorName}`;
     }
-    if (
-      (first === 'c' || first === 'user') &&
-      /^[A-Za-z0-9._-]{1,100}$/.test(second ?? '') &&
-      (!third || profileTabs.has(third))
-    ) {
-      return `https://www.youtube.com/${first}/${second}`;
-    }
-    throw new InputError('url must be a YouTube creator profile or channel URL.');
+    throw new InputError('url must identify a YouTube handle, channel, custom URL, or user.');
   }
 
-  throw new InputError('url must be an Instagram, TikTok, or YouTube HTTPS profile URL.');
+  throw new InputError('url must use an Instagram, TikTok, or YouTube host.');
 };
 
 const sanitizeInput = (input) => {
@@ -192,7 +200,7 @@ const readResponseBody = async (response) => {
       try {
         await reader.cancel();
       } catch {
-        // The paid request already completed; cancellation is best-effort only.
+        // The quota-charging request already completed; cancellation is best-effort only.
       }
       throw new ResponseBodyError('RESPONSE_TOO_LARGE', 'WaveInflu returned a response larger than 1 MiB.');
     }
@@ -234,7 +242,7 @@ const errorResponse = (payload) => {
   return Object.keys(summary).length ? summary : undefined;
 };
 
-const isNonNegativeNumber = (value) => Number.isFinite(value) && value >= 0;
+const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
 
 const platformFromProfileUrl = (url) => {
   const host = new URL(url).hostname;
@@ -249,6 +257,7 @@ const isValidSuccess = (payload, expectedPlatform, expectedProfileUrl) => {
   if (
     !isObject(payload) ||
     payload.code !== 1000 ||
+    typeof payload.message !== 'string' ||
     !isObject(payload.data) ||
     payload.data.platform !== expectedPlatform ||
     payload.data.profileLink !== expectedProfileUrl ||
@@ -272,9 +281,11 @@ const isValidSuccess = (payload, expectedPlatform, expectedProfileUrl) => {
     return false;
   }
 
+  const emails = payload.data.emails;
   return (
+    new Set(emails).size === emails.length &&
     payload.data.quota.cost === (expectedPlatform === 'tiktok' ? 1 : 2) &&
-    isNonNegativeNumber(payload.data.quota.remainingQuota)
+    isNonNegativeInteger(payload.data.quota.remainingQuota)
   );
 };
 
@@ -293,6 +304,7 @@ const main = async () => {
 
   const payload = sanitizeInput(await readInput());
   const endpoint = buildEndpoint();
+  const correlationId = randomUUID();
 
   let response;
   requestAttempted = true;
@@ -304,6 +316,7 @@ const main = async () => {
         'Content-Type': 'application/json',
         'User-Agent': `waveinflu-skills/${CLIENT_VERSION}`,
         'X-WaveInflu-Api-Key': apiKey,
+        'X-Request-Id': correlationId,
       },
       body: JSON.stringify(payload),
       redirect: 'error',
@@ -314,15 +327,18 @@ const main = async () => {
       ok: false,
       requestSent: 'unknown',
       autoRetryAllowed: false,
+      requestId: correlationId,
       error: {
         type: error?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
-        message: 'The paid request outcome is unknown. Do not retry automatically.',
+        message: 'The quota outcome is unknown. Do not retry automatically.',
       },
     });
     return;
   }
 
   let text;
+  const requestId =
+    safeErrorText(response.headers.get('x-request-id')?.trim(), 256) ?? correlationId;
   try {
     text = await readResponseBody(response);
   } catch (error) {
@@ -331,9 +347,10 @@ const main = async () => {
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       error: {
         type: error instanceof ResponseBodyError ? error.type : 'RESPONSE_READ_ERROR',
-        message: 'The paid request completed, but its response could not be read. Do not retry automatically.',
+        message: 'The response could not be read, so the quota outcome is unknown. Do not retry automatically.',
       },
     });
     return;
@@ -348,6 +365,7 @@ const main = async () => {
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       ...(retryAfter ? { retryAfter } : {}),
       ...(responseError ? { response: responseError } : {}),
       error: { type: 'HTTP_ERROR', message: `WaveInflu API returned HTTP ${response.status}.` },
@@ -361,6 +379,7 @@ const main = async () => {
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       error: {
         type: 'INVALID_RESPONSE',
         message: 'WaveInflu returned an unexpected success response. Do not retry automatically.',
