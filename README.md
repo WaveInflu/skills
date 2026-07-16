@@ -1,5 +1,7 @@
 # WaveInflu Skills
 
+English | [简体中文](README.zh-CN.md)
+
 Official Agent Skills for finding similar creators and looking up public creator business emails with the WaveInflu API.
 
 | Skill | Capability | Quota |
@@ -84,7 +86,7 @@ $waveinflu-lookup-creator-email
 Find the public business email for https://www.youtube.com/@example.
 ```
 
-Natural-language requests can also trigger the matching skill automatically. Before a paid call, the agent states the requested count or lookup cost. A timeout or malformed response is treated as an unknown paid outcome and is never retried without a new user request.
+Natural-language requests can also trigger the matching skill automatically. Before a quota-charging call, the agent states the requested count or lookup quota cost. A timeout or malformed response is treated as an unknown quota outcome and is never retried without a new user request.
 
 ## Security and billing behavior
 
