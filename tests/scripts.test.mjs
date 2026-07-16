@@ -890,7 +890,7 @@ test('skill metadata remains self-contained and names match their directories', 
   const skillNames = ['waveinflu-discover-creators', 'waveinflu-lookup-creator-email'];
   for (const name of skillNames) {
     const directory = resolve(ROOT, 'skills', name);
-    const skill = await readFile(resolve(directory, 'SKILL.md'), 'utf8');
+    const skill = (await readFile(resolve(directory, 'SKILL.md'), 'utf8')).replaceAll('\r\n', '\n');
     const openai = await readFile(resolve(directory, 'agents/openai.yaml'), 'utf8');
     assert.match(skill, new RegExp(`^---\\nname: ${name}\\n`, 'm'));
     assert.match(skill, /^description: .+$/m);

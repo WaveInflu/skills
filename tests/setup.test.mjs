@@ -69,6 +69,7 @@ test('setup argument parsing stays small and explicit', () => {
   assert.equal(parseArguments(['--agent', 'claude-code', '--reconfigure']).agent, 'claude-code');
   assert.equal(parseArguments(['--status']).status, true);
   assert.throws(() => parseArguments(['--agent']), /requires a value/);
+  assert.throws(() => parseArguments(['--agent', 'codex & whoami']), /unsupported characters/);
   assert.throws(() => parseArguments(['--unknown']), /Unknown option/);
   assert.throws(() => parseArguments(['--status', '--reconfigure']), /cannot be combined/);
 });

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, win32 as windowsPath } from 'node:path';
+import { dirname, join, posix as posixPath, win32 as windowsPath } from 'node:path';
 
 const VERSION = '0.1.0';
 const SKILLS_CLI_VERSION = '1.5.18';
@@ -29,8 +29,8 @@ export const getCredentialsPath = (environment = process.env, platform = process
     return windowsPath.join(appData, 'WaveInflu', 'credentials.json');
   }
 
-  const configHome = environment.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config');
-  return join(configHome, 'waveinflu', 'credentials.json');
+  const configHome = environment.XDG_CONFIG_HOME?.trim() || posixPath.join(homedir(), '.config');
+  return posixPath.join(configHome, 'waveinflu', 'credentials.json');
 };
 
 export const parseArguments = (args) => {
@@ -43,6 +43,9 @@ export const parseArguments = (args) => {
     else if (argument === '--agent') {
       const agent = args[index + 1]?.trim();
       if (!agent || agent.startsWith('-')) throw new Error('--agent requires a value.');
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(agent)) {
+        throw new Error('--agent contains unsupported characters.');
+      }
       options.agent = agent;
       index += 1;
     } else {
@@ -167,7 +170,8 @@ const promptForApiKey = async () => {
 
 const runCommand = (command, args) =>
   new Promise((resolveCommand, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
+    // Windows cannot execute .cmd shims directly; all arguments are constants or validated above.
+    const child = spawn(command, args, { stdio: 'inherit', shell: process.platform === 'win32' });
     child.once('error', reject);
     child.once('close', (code, signal) => {
       if (code === 0) resolveCommand();
