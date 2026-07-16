@@ -1,0 +1,31 @@
+{
+  "name": "@waveinflu/setup",
+  "version": "0.1.0",
+  "description": "Install or update WaveInflu Skills and configure an API Key",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "waveinflu-setup": "./bin/setup.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WaveInflu/skills.git",
+    "directory": "packages/setup"
+  },
+  "homepage": "https://github.com/WaveInflu/skills#readme",
+  "bugs": {
+    "url": "https://github.com/WaveInflu/skills/issues"
+  }
+}

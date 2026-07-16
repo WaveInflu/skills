@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -36,12 +37,16 @@ const startServer = async (handler) => {
 
 const runScript = (script, input, env = {}) =>
   new Promise((resolveRun, reject) => {
+    const childEnvironment = {
+      ...process.env,
+      WAVEINFLU_API_KEY: TEST_API_KEY,
+      ...env,
+    };
+    for (const [key, value] of Object.entries(childEnvironment)) {
+      if (value === undefined) delete childEnvironment[key];
+    }
     const child = spawn(process.execPath, [script], {
-      env: {
-        ...process.env,
-        WAVEINFLU_API_KEY: TEST_API_KEY,
-        ...env,
-      },
+      env: childEnvironment,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -606,6 +611,139 @@ test('missing or malformed API keys fail locally', async () => {
   }
 });
 
+test('both scripts load user-level credentials when no environment override exists', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'waveinflu-config-'));
+  const credentialDirectory = join(
+    configHome,
+    process.platform === 'win32' ? 'WaveInflu' : 'waveinflu',
+  );
+  const credentialPath = join(credentialDirectory, 'credentials.json');
+  const receivedKeys = [];
+  const server = await startServer(async (request, response) => {
+    receivedKeys.push(request.headers['x-waveinflu-api-key']);
+    const body = await readJsonBody(request);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(
+      JSON.stringify(
+        request.url === '/api/v1/similar'
+          ? discoverSuccess(body)
+          : lookupSuccess(body.url),
+      ),
+    );
+  });
+
+  try {
+    await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(
+      credentialPath,
+      `${JSON.stringify({ version: 1, apiKey: TEST_API_KEY })}\n`,
+      { mode: 0o600 },
+    );
+    for (const testCase of quotaCases) {
+      const result = await runScript(testCase.script, testCase.input, {
+        WAVEINFLU_API_KEY: undefined,
+        XDG_CONFIG_HOME: configHome,
+        APPDATA: configHome,
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 0, result.stderr);
+    }
+    assert.deepEqual(receivedKeys, [TEST_API_KEY, TEST_API_KEY]);
+  } finally {
+    await server.close();
+    await rm(configHome, { recursive: true, force: true });
+  }
+});
+
+test('environment credentials override the saved user credential', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'waveinflu-config-'));
+  const credentialDirectory = join(
+    configHome,
+    process.platform === 'win32' ? 'WaveInflu' : 'waveinflu',
+  );
+  const environmentKey = `waveInflu_${'B'.repeat(40)}`;
+  let receivedKey;
+  const server = await startServer(async (request, response) => {
+    receivedKey = request.headers['x-waveinflu-api-key'];
+    const body = await readJsonBody(request);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(lookupSuccess(body.url)));
+  });
+
+  try {
+    await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(credentialDirectory, 'credentials.json'),
+      `${JSON.stringify({ version: 1, apiKey: TEST_API_KEY })}\n`,
+      { mode: 0o600 },
+    );
+    const result = await runScript(LOOKUP_SCRIPT, { url: 'youtube.com/@example' }, {
+      WAVEINFLU_API_KEY: environmentKey,
+      XDG_CONFIG_HOME: configHome,
+      APPDATA: configHome,
+      WAVEINFLU_API_BASE_URL: server.origin,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(receivedKey, environmentKey);
+  } finally {
+    await server.close();
+    await rm(configHome, { recursive: true, force: true });
+  }
+});
+
+test('unsafe or invalid saved credentials fail before a request is submitted', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'waveinflu-config-'));
+  const credentialDirectory = join(
+    configHome,
+    process.platform === 'win32' ? 'WaveInflu' : 'waveinflu',
+  );
+  const credentialPath = join(credentialDirectory, 'credentials.json');
+  let requestCount = 0;
+  const server = await startServer((_request, response) => {
+    requestCount += 1;
+    response.end();
+  });
+
+  try {
+    await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(credentialPath, '{"version":1,"apiKey":"invalid"}\n', { mode: 0o600 });
+    for (const script of [DISCOVER_SCRIPT, LOOKUP_SCRIPT]) {
+      const input = script === DISCOVER_SCRIPT
+        ? { platform: 'youtube', contentDirection: 'technology' }
+        : { url: 'youtube.com/@example' };
+      const result = await runScript(script, input, {
+        WAVEINFLU_API_KEY: undefined,
+        XDG_CONFIG_HOME: configHome,
+        APPDATA: configHome,
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 1);
+      assert.equal(JSON.parse(result.stderr).requestSent, false);
+    }
+
+    if (process.platform !== 'win32') {
+      await writeFile(
+        credentialPath,
+        `${JSON.stringify({ version: 1, apiKey: TEST_API_KEY })}\n`,
+        { mode: 0o600 },
+      );
+      await chmod(credentialPath, 0o644);
+      const unsafe = await runScript(LOOKUP_SCRIPT, { url: 'youtube.com/@example' }, {
+        WAVEINFLU_API_KEY: undefined,
+        XDG_CONFIG_HOME: configHome,
+        APPDATA: configHome,
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(unsafe.code, 1);
+      assert.match(JSON.parse(unsafe.stderr).error.message, /permissions/i);
+    }
+    assert.equal(requestCount, 0);
+  } finally {
+    await server.close();
+    await rm(configHome, { recursive: true, force: true });
+  }
+});
+
 test('an arbitrary API origin is rejected before the key can be sent', async () => {
   const result = await runScript(
     LOOKUP_SCRIPT,
@@ -758,5 +896,16 @@ test('skill metadata remains self-contained and names match their directories', 
     assert.match(skill, /^description: .+$/m);
     assert.match(openai, new RegExp(`\\$${name}\\b`));
     await readFile(resolve(directory, 'references/api-contract.md'), 'utf8');
+    await readFile(resolve(directory, 'scripts/credentials.mjs'), 'utf8');
   }
+  assert.equal(
+    await readFile(
+      resolve(ROOT, 'skills/waveinflu-discover-creators/scripts/credentials.mjs'),
+      'utf8',
+    ),
+    await readFile(
+      resolve(ROOT, 'skills/waveinflu-lookup-creator-email/scripts/credentials.mjs'),
+      'utf8',
+    ),
+  );
 });
