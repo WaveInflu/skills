@@ -1,4 +1,4 @@
 interface:
   display_name: "WaveInflu Creator Discovery"
-  short_description: "Find matching creators across three platforms"
-  default_prompt: "Use $waveinflu-discover-creators to find creators matching my seed profile or campaign brief."
+  short_description: "Find and safely continue creator searches"
+  default_prompt: "Use $waveinflu-discover-creators to find enough creators for my seed profile or campaign brief within a clear quota cap."

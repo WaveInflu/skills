@@ -597,17 +597,26 @@ test('email lookup rejects inconsistent success data', async () => {
 });
 
 test('missing or malformed API keys fail locally', async () => {
-  for (const [script, input] of [
-    [DISCOVER_SCRIPT, { platform: 'youtube', contentDirection: 'technology' }],
-    [LOOKUP_SCRIPT, { url: 'youtube.com/@example' }],
-  ]) {
-    for (const key of ['', 'waveInflu_short']) {
-      const result = await runScript(script, input, { WAVEINFLU_API_KEY: key });
-      const error = JSON.parse(result.stderr);
-      assert.equal(result.code, 1);
-      assert.equal(error.requestSent, false);
-      assert.equal(error.error.type, 'LOCAL_INPUT_ERROR');
+  const configHome = await mkdtemp(join(tmpdir(), 'waveinflu-empty-config-'));
+  try {
+    for (const [script, input] of [
+      [DISCOVER_SCRIPT, { platform: 'youtube', contentDirection: 'technology' }],
+      [LOOKUP_SCRIPT, { url: 'youtube.com/@example' }],
+    ]) {
+      for (const key of ['', 'waveInflu_short']) {
+        const result = await runScript(script, input, {
+          WAVEINFLU_API_KEY: key,
+          XDG_CONFIG_HOME: configHome,
+          APPDATA: configHome,
+        });
+        const error = JSON.parse(result.stderr);
+        assert.equal(result.code, 1);
+        assert.equal(error.requestSent, false);
+        assert.equal(error.error.type, 'LOCAL_INPUT_ERROR');
+      }
     }
+  } finally {
+    await rm(configHome, { recursive: true, force: true });
   }
 });
 

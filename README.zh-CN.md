@@ -6,8 +6,8 @@
 
 | Skill | 能力 | 额度账户 |
 |---|---|---|
-| `waveinflu-discover-creators` | 发现相似的 YouTube、TikTok 和 Instagram 达人 | 主额度 |
-| `waveinflu-lookup-creator-email` | 查询单个达人的公开联系邮箱和链接 | 邮箱额度 |
+| `waveinflu-discover-creators` | 在 YouTube、TikTok 和 Instagram 找达人，并在安全边界内自动补齐 | 主额度 |
+| `waveinflu-lookup-creator-email` | 批量查询最多 50 位达人的公开联系邮箱和链接 | 邮箱额度 |
 
 需要 Node.js 22 或更高版本。
 
@@ -51,10 +51,10 @@ $waveinflu-discover-creators
 
 ```text
 $waveinflu-lookup-creator-email
-查找 https://www.youtube.com/@example 的公开联系邮箱。
+查询 https://www.youtube.com/@example 和 https://www.instagram.com/example/ 的公开联系邮箱。
 ```
 
-如果 Agent 能匹配已安装的 Skill，也可以省略 `$skill-name`，直接用自然语言提问。YouTube 和 TikTok 发现支持达人主页、活动描述或两者组合；Instagram 发现使用活动描述。邮箱查询每次接收一个受支持的达人 URL。
+如果 Agent 能匹配已安装的 Skill，也可以省略 `$skill-name`，直接用自然语言提问。YouTube 和 TikTok 发现支持达人主页、活动描述或两者组合；Instagram 发现使用活动描述。邮箱查询支持一次提交 1–50 个达人主页 URL。
 
 ## 额度规则
 
@@ -72,7 +72,9 @@ $waveinflu-lookup-creator-email
 
 调用前，Agent 会概括请求范围和预计预扣额度或查询成本；调用成功后，会报告服务端返回的剩余额度。
 
-两个 Skill 每次只发送一个会消耗额度的 POST 请求，绝不自动重试、翻页、放宽筛选条件或切换平台。超时或响应异常后，额度状态未知；只有在你决定再次尝试后，才应发起一个新请求。
+找达人在一次成功返回后仍未达到目标数量时，可以按原条件继续补搜，最多 3 次调用。它只查询尚缺的数量、对累计结果去重，并严格受调用前说明的总额度上限约束。这是成功结算后的继续查询，不是对未知结果的重试。
+
+邮箱查询会先校验并去重整批 URL，再以每批最多 3 个请求并发执行。任一请求出现未知扣费状态后，不再启动下一批；同一批已经发出的请求会正常等待结果，避免中途取消制造更多未知状态。两个 Skill 都不会重试超时或异常响应，也不会自动放宽条件或切换平台。
 
 ## 官方文档
 

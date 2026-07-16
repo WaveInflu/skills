@@ -4,6 +4,7 @@
 
 - [Endpoint and authentication](#endpoint-and-authentication)
 - [Bundled-script boundary](#bundled-script-boundary)
+- [Bounded continuation](#bounded-continuation)
 - [Request](#request)
 - [Modes and seed URLs](#modes-and-seed-urls)
 - [Filters and retrieval rules](#filters-and-retrieval-rules)
@@ -26,11 +27,11 @@ Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bea
 
 To issue a Key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new Key immediately. The full value is shown only once. Run `npx @waveinflu/setup@latest` in a terminal to install or update the Skills and save the Key outside project directories. Never paste it into chat. `WAVEINFLU_API_KEY` is an optional CI/automation override.
 
-The endpoint is synchronous and quota-charging. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically. The script sends a random `X-Request-Id` for support correlation and application responses normally echo it. This ID is diagnostic only and does not make a request idempotent.
+The endpoint is synchronous and quota-charging. It does not accept an idempotency key or server-enforced `maxQuotaCost`. Do not retry it automatically. The script sends a random `X-Request-Id` for support correlation and application responses normally echo it. This ID is diagnostic only and does not make a request idempotent.
 
 ## Bundled-script boundary
 
-The bundled script is the required Skill execution path. It rebuilds a clean payload, makes exactly one POST, rejects redirects, limits input and response sizes, and never retries.
+`discover.mjs` is the atomic charging boundary. It rebuilds a clean payload, makes exactly one POST, rejects redirects, limits input and response sizes, and never retries. `discover-bounded.mjs` is the Skill entry point: it validates the full plan first, then starts a fresh atomic process for each allowed continuation.
 
 It is intentionally stricter than the raw API:
 
@@ -45,6 +46,19 @@ It is intentionally stricter than the raw API:
 
 `WAVEINFLU_API_BASE_URL` is only a local-test override and is restricted to loopback hosts. Leave it unset in normal use.
 
+## Bounded continuation
+
+The bounded script accepts the normal discovery request plus a required local `maxQuotaCost` integer. This field is never sent to the API. It is enforced before every atomic process.
+
+- Maximum three sequential POSTs for one user instruction.
+- The first POST uses the requested `limit`. A later POST is allowed only after a validated successful response and requests at most the remaining unique target.
+- Each later request preserves platform, seed, brief, filters, and `globalDeduplicationEnabled` exactly.
+- Results are accumulated and deduplicated across calls by `channelId` for YouTube or `userId` for TikTok/Instagram.
+- Stop on target reached, three calls, local quota cap, zero new unique creators, or any failed/unknown response.
+- A timeout, network failure, unreadable body, invalid response, redirect, or HTTP error never triggers another call.
+
+This distinction is fundamental: a continuation starts only after the previous request returned a validated success with settled quota; a retry repeats a request whose quota outcome may be unknown. Retries remain prohibited.
+
 ## Request
 
 | Field | Type | Rules |
@@ -55,6 +69,8 @@ It is intentionally stricter than the raw API:
 | `limit` | integer | Default 25; range 1–100. |
 | `globalDeduplicationEnabled` | boolean | Default `true`. |
 | `filters` | object | Optional strict object; supported keys are listed below. |
+
+`discover-bounded.mjs` also requires `maxQuotaCost`. It must cover the initial reservation, `ceil(limit / platform ratio)`. The recommended default is that initial reservation plus 2 credits, which permits the rounding overhead of splitting a successful target across at most three calls without allowing duplicate-heavy continuation to run freely.
 
 For `contentDirection`, preserve the user's campaign intent as prose. Do not add inferred demographic requirements or silently broaden the brief.
 
@@ -136,7 +152,7 @@ refundQuota = reservedQuota - chargedQuota
 
 The account must have enough main quota for the full reservation before retrieval begins. Unused reservation is refunded synchronously; `refundStatus` is `completed` when a refund occurred and `not_required` when none was needed.
 
-State the deterministic reservation before the call, but always report the server-returned `quota` object as final. The Skill has no server-enforced per-request spend ceiling beyond `limit` and these formulas.
+State the deterministic initial reservation and local total cap before the call. The raw API still has no server-enforced spend ceiling, so the bounded script clips every continuation to the remaining local budget and stops before another process when no budget remains. Always report the aggregate `quota.chargedQuota` and last server-returned `remainingQuota`.
 
 ## Response
 
@@ -204,6 +220,23 @@ Success uses the standard envelope:
 | `quota.refundQuota` | number | Unused reservation returned. |
 | `quota.refundStatus` | enum | `not_required` or `completed`. |
 
+### Bounded response
+
+`discover-bounded.mjs` returns the same creator objects in `data.data`, plus:
+
+| Field | Meaning |
+|---|---|
+| `data.targetCount` | Original requested result count. |
+| `data.complete` | Whether unique results reached the target. |
+| `data.continuation.calls` | Per-call request ID, requested limit, returned count, new unique count, and charged quota. |
+| `data.continuation.maxCalls` | Fixed at 3. |
+| `data.continuation.maxQuotaCost` | Local total spend cap. |
+| `data.continuation.stopReason` | `target_reached`, `max_calls_reached`, `quota_cap_reached`, or `no_new_unique_results`. |
+| `data.quota.reservedQuota` | Sum of successful call reservations. |
+| `data.quota.chargedQuota` | Sum of successful call charges. |
+| `data.quota.refundQuota` | Sum of successful call refunds. |
+| `data.quota.remainingQuota` | Account balance returned by the last successful call. |
+
 ### Fields common to every creator
 
 | Field | Type | Meaning |
@@ -264,4 +297,4 @@ The script writes structured JSON to stderr, exits non-zero, and always sets `au
 
 Post-attempt errors include the generated or echoed top-level `requestId` for correlation when available. It must never be used as permission to retry.
 
-Only `requestSent: false` is safe to correct without duplicate-charge risk.
+Only `requestSent: false` is safe to correct without duplicate-charge risk. When a later continuation fails, the bounded error includes successful `partialData`, completed-call count, known charged quota, and the failed call number; it never starts the next call.

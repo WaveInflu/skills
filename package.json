@@ -1,6 +1,6 @@
 {
   "name": "waveinflu-skills",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Official WaveInflu skills for creator discovery and public email lookup",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "node --check packages/setup/bin/setup.mjs && node --check packages/setup/src/setup.mjs && node --check skills/waveinflu-discover-creators/scripts/discover.mjs && node --check skills/waveinflu-lookup-creator-email/scripts/lookup.mjs && node --test tests/*.test.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "check": "node --check packages/setup/bin/setup.mjs && node --check packages/setup/src/setup.mjs && node --check skills/waveinflu-discover-creators/scripts/discover.mjs && node --check skills/waveinflu-discover-creators/scripts/discover-bounded.mjs && node --check skills/waveinflu-lookup-creator-email/scripts/lookup.mjs && node --check skills/waveinflu-lookup-creator-email/scripts/lookup-batch.mjs && node --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
   }
 }

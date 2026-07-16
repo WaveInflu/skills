@@ -25,11 +25,11 @@ Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bea
 
 To issue a Key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new Key immediately. The full value is shown only once. Run `npx @waveinflu/setup@latest` in a terminal to install or update the Skills and save the Key outside project directories. Never paste it into chat. `WAVEINFLU_API_KEY` is an optional CI/automation override.
 
-This is a synchronous, quota-charging POST. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically.
+This is a synchronous, quota-charging POST. It does not accept an idempotency key or server-enforced `maxQuotaCost`. Do not retry it automatically.
 
 ## Request
 
-The Skill accepts exactly one creator profile per invocation:
+The raw endpoint and atomic `lookup.mjs` accept exactly one creator profile per invocation:
 
 ```json
 {
@@ -37,7 +37,21 @@ The Skill accepts exactly one creator profile per invocation:
 }
 ```
 
-The API field is a trimmed, non-empty string up to 2,048 characters. A display name, bare handle, search query, list, or export is not a valid Skill input. The URL may omit its protocol or use HTTP; the bundled script normalizes every accepted identity to a canonical HTTPS profile URL before submission.
+The API field is a trimmed, non-empty string up to 2,048 characters. A display name, bare handle, or search query is not valid. The URL may omit its protocol or use HTTP; the atomic script normalizes every accepted identity to a canonical HTTPS profile URL before submission.
+
+The Skill entry point `lookup-batch.mjs` accepts:
+
+```json
+{
+  "urls": [
+    "https://www.instagram.com/example/",
+    "https://www.tiktok.com/@example"
+  ],
+  "maxQuotaCost": 3
+}
+```
+
+`urls` must contain 1–50 profile URLs. `maxQuotaCost` is a required positive integer enforced locally and never sent to the API.
 
 ## Supported URLs
 
@@ -53,7 +67,7 @@ Input such as `instagram.com/example/reels`, `http://www.tiktok.com/@example/vid
 
 ## Bundled-script boundary
 
-The bundled script preserves the backend's safely identifiable URL range while preventing an Agent from charging the wrong identity:
+The atomic script preserves the backend's safely identifiable URL range while preventing an Agent from charging the wrong identity:
 
 - Require one JSON object with exactly one field, `url`.
 - Accept a missing protocol or HTTP input and normalize it to HTTPS; reject credentials and custom ports.
@@ -64,6 +78,17 @@ The bundled script preserves the backend's safely identifiable URL range while p
 - Canonicalize supported bare, `www.`, and `m.` hosts before submission.
 - Require Node.js 22 or newer and the exact issued API-key format.
 - Rebuild the body, make exactly one POST, reject redirects, limit response size, and never retry.
+
+The batch script adds a bounded orchestration layer:
+
+- Validate and canonicalize every URL before the first POST.
+- Deduplicate canonical URLs while preserving first-seen order, so URL variants for the same profile are charged once.
+- Calculate the complete planned cost and reject the batch before any POST when it exceeds `maxQuotaCost`.
+- Run fixed waves of at most three concurrent atomic processes.
+- Wait for the whole current wave to settle before starting another wave.
+- Stop before the next wave if any current lookup fails or has an unknown quota outcome. Already-running requests are not aborted because aborting creates additional unknown outcomes.
+
+With concurrency 3, a failed profile can have up to two later profiles already in flight in the same wave. No profile from a later wave is sent.
 
 If the script cannot safely identify one creator from the URL, ask the user for that creator's profile URL. Do not bypass the script or guess from a content ID.
 
@@ -143,6 +168,8 @@ The service parses the URL first, then atomically consumes the fixed platform co
 
 Always report the server-returned `quota.cost` and `quota.remainingQuota` as final.
 
+For a successful batch, report `data.chargedQuota` as the sum of deduplicated successful lookups and `data.remainingQuota` as the lowest server-returned balance across the concurrent successes. `plannedQuotaCost` is only the preflight bound; it is not an additional charge.
+
 ## Errors
 
 Error responses normally use `{ "code": number, "message": string, "error": ... }`. Messages can be localized; use HTTP status, business code, and safe error details.
@@ -168,4 +195,6 @@ The script writes structured JSON to stderr, exits non-zero, and always sets `au
 - `requestSent: true`: the API returned an HTTP error or an unreadable/invalid response after the POST.
 - `requestSent: "unknown"`: the request attempt encountered a timeout, redirect, or network failure; it may have reached the API and charged quota.
 
-Only `requestSent: false` is safe to correct without duplicate-charge risk. V1 still permits one creator profile per invocation.
+Only `requestSent: false` is safe to correct without duplicate-charge risk. On batch failure, `partialResults` contains successful lookups, `knownChargedQuota` excludes unknown outcomes, and `notStartedUrls` lists profiles from later waves that were never sent.
+
+Core rule: prohibit retries whenever charging is unknown; allow new work only after successful settlement and only within explicit item, concurrency, and quota limits.

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 
 import { loadApiKey } from './credentials.mjs';
 
@@ -9,7 +10,7 @@ const API_PATH = '/api/v1/email-lookup';
 const MAX_INPUT_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
-const CLIENT_VERSION = '0.3.0';
+const CLIENT_VERSION = '0.4.0';
 const RESERVED_INSTAGRAM_PATHS = new Set([
   'p',
   'reel',
@@ -85,7 +86,7 @@ const safeIdentity = (value, field, maxLength = 100) => {
   return value;
 };
 
-const canonicalProfileUrl = (raw) => {
+export const canonicalProfileUrl = (raw) => {
   if (typeof raw !== 'string' || !raw.trim() || raw.length > 2_048) {
     throw new InputError('url must be a non-empty creator profile URL no longer than 2048 characters.');
   }
@@ -245,7 +246,7 @@ const errorResponse = (payload) => {
 
 const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
 
-const platformFromProfileUrl = (url) => {
+export const platformFromProfileUrl = (url) => {
   const host = new URL(url).hostname;
   if (host === 'www.instagram.com') return 'instagram';
   if (host === 'www.tiktok.com') return 'tiktok';
@@ -395,15 +396,17 @@ const main = async () => {
   process.stdout.write(`${JSON.stringify(responsePayload, null, 2)}\n`);
 };
 
-main().catch((error) => {
-  const localInputError = error instanceof InputError && !requestAttempted;
-  fail({
-    ok: false,
-    requestSent: requestAttempted ? 'unknown' : false,
-    autoRetryAllowed: false,
-    error: {
-      type: localInputError ? 'LOCAL_INPUT_ERROR' : 'LOCAL_SCRIPT_ERROR',
-      message: localInputError ? error.message : 'The local WaveInflu script failed.',
-    },
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    const localInputError = error instanceof InputError && !requestAttempted;
+    fail({
+      ok: false,
+      requestSent: requestAttempted ? 'unknown' : false,
+      autoRetryAllowed: false,
+      error: {
+        type: localInputError ? 'LOCAL_INPUT_ERROR' : 'LOCAL_SCRIPT_ERROR',
+        message: localInputError ? error.message : 'The local WaveInflu script failed.',
+      },
+    });
   });
-});
+}

@@ -6,8 +6,8 @@ Give your Agent two focused WaveInflu capabilities—creator discovery and publi
 
 | Skill | What it does | Quota pool |
 |---|---|---|
-| `waveinflu-discover-creators` | Finds similar YouTube, TikTok, and Instagram creators | Main quota |
-| `waveinflu-lookup-creator-email` | Looks up one creator's public contact email and links | Email quota |
+| `waveinflu-discover-creators` | Finds and safely continues similar-creator searches on YouTube, TikTok, and Instagram | Main quota |
+| `waveinflu-lookup-creator-email` | Looks up public contact emails and links for up to 50 creators | Email quota |
 
 Requires Node.js 22 or newer.
 
@@ -51,10 +51,10 @@ Find 20 TikTok creators similar to https://www.tiktok.com/@example for a US skin
 
 ```text
 $waveinflu-lookup-creator-email
-Find the public contact email for https://www.youtube.com/@example.
+Find public contact emails for these creator profiles: https://www.youtube.com/@example and https://www.instagram.com/example/.
 ```
 
-You can also omit the `$skill-name` prefix and ask in natural language when your Agent can match installed Skills. Discovery accepts a profile, a campaign brief, or both for YouTube and TikTok; Instagram discovery uses a campaign brief. Email lookup accepts one supported creator URL per request.
+You can also omit the `$skill-name` prefix and ask in natural language when your Agent can match installed Skills. Discovery accepts a profile, a campaign brief, or both for YouTube and TikTok; Instagram discovery uses a campaign brief. Email lookup accepts 1–50 supported creator URLs.
 
 ## Quota behavior
 
@@ -72,7 +72,9 @@ Discovery reserves `ceil(requested limit ÷ platform ratio)` before recall, then
 
 Before calling, the Agent summarizes the scope and expected reservation or lookup cost. After a successful call, it reports the remaining balance returned by the server.
 
-Both Skills send one quota-consuming POST request at a time. They never retry, paginate, broaden filters, or switch platforms automatically. After a timeout or malformed response, quota status is unknown; submit a new request only after you decide to try again.
+Creator discovery may continue up to three sequential calls when a validated successful response returns fewer unique creators than requested. It preserves every criterion, requests only the remaining target, deduplicates results, and stops at a stated total quota cap. This is continuation after successful settlement, not retrying an uncertain request.
+
+Email lookup validates and deduplicates the full list before charging, then runs fixed waves of at most three concurrent requests. If one request has an unknown outcome, no later wave starts; requests already in that wave are allowed to settle. Neither Skill retries a timeout, malformed response, or other unknown charging outcome, and neither broadens criteria or switches platforms automatically.
 
 ## Documentation
 
