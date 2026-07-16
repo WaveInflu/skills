@@ -6,12 +6,14 @@
 
 | Run | Behavior |
 |---|---|
-| First run | Install both Skills, request the Key through hidden input, save credentials |
-| Later run | Refresh both Skills, keep the saved Key |
-| `--reconfigure` | Refresh both Skills, replace the saved Key |
+| First run | Install every published WaveInflu Skill, request the Key through hidden input, save credentials |
+| Later run | Refresh existing Skills, install newly published Skills, keep the saved Key |
+| `--reconfigure` | Refresh every published Skill, replace the saved Key |
 | `--status` | Check only the local credential file; never call the API |
 
 Credentials live outside installed Skill directories, so a Skill update cannot overwrite them. Runtime resolution is `WAVEINFLU_API_KEY` first for CI/automation, then the user credential file.
+
+Setup deliberately selects `*` from the repository on every normal run. Adding another directory under `skills/` therefore needs no Setup code change; users receive it the next time they run the same `@latest` command.
 
 ## Versioning
 

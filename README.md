@@ -26,7 +26,7 @@ Requires Node.js 22 or newer.
 npx @waveinflu/setup@latest
 ```
 
-Setup installs or updates both Skills for Codex, then asks for the Key through a hidden prompt. Restart Codex when it finishes.
+Setup installs or updates every published WaveInflu Skill for Codex, then asks for the Key through a hidden prompt. Restart Codex when it finishes.
 
 Use another supported Agent when needed:
 
@@ -34,7 +34,7 @@ Use another supported Agent when needed:
 npx @waveinflu/setup@latest --agent claude-code
 ```
 
-Run the same Setup command again whenever WaveInflu publishes an update. It refreshes only the WaveInflu Skills and keeps the existing Key. To replace the Key:
+Run the same Setup command again whenever WaveInflu publishes an update. It refreshes existing WaveInflu Skills, installs newly added ones, and keeps the existing Key. To replace the Key:
 
 ```bash
 npx @waveinflu/setup@latest --reconfigure

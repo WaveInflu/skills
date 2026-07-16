@@ -11,7 +11,7 @@ const DEFAULT_AGENT = 'codex';
 
 const usage = `WaveInflu Setup ${VERSION}
 
-Install or update both WaveInflu Skills and configure an API Key.
+Install or update every published WaveInflu Skill and configure an API Key.
 
 Usage:
   npx @waveinflu/setup@latest [options]

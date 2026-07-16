@@ -26,7 +26,7 @@
 npx @waveinflu/setup@latest
 ```
 
-Setup 会为 Codex 安装或更新两个 Skill，然后通过隐藏输入接收 Key。完成后重启 Codex。
+Setup 会为 Codex 安装或更新当前发布的全部 WaveInflu Skill，然后通过隐藏输入接收 Key。完成后重启 Codex。
 
 需要安装到其他受支持的 Agent 时：
 
@@ -34,7 +34,7 @@ Setup 会为 Codex 安装或更新两个 Skill，然后通过隐藏输入接收 
 npx @waveinflu/setup@latest --agent claude-code
 ```
 
-WaveInflu 发布更新后，重新运行同一条 Setup 命令即可。它只刷新 WaveInflu Skill，并保留现有 Key。需要更换 Key 时运行：
+WaveInflu 发布更新后，重新运行同一条 Setup 命令即可。它会刷新已有 WaveInflu Skill、安装后来新增的 Skill，并保留现有 Key。需要更换 Key 时运行：
 
 ```bash
 npx @waveinflu/setup@latest --reconfigure
