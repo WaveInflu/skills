@@ -2,7 +2,7 @@
 
 [English](README.md) · 简体中文
 
-无需运行 MCP Server，也无需安装 WaveInflu CLI，即可让 Agent 获得两项专注能力：发现相似达人、查询公开联系方式。
+无需运行 MCP Server，即可让 Agent 获得两项专注能力：发现相似达人、查询公开联系方式。一次 Setup 会完成 Skill 安装，并把 API Key 安全保存在项目目录之外。
 
 | Skill | 能力 | 额度账户 |
 |---|---|---|
@@ -20,34 +20,29 @@
 3. 输入名称并签发 Key。
 4. 立即复制——完整 Key 只显示一次。
 
-### 2. 安装两个 Skill
+### 2. 运行 Setup
 
 ```bash
-npx skills add WaveInflu/skills --global
+npx @waveinflu/setup@latest
 ```
 
-如果 Agent 已经运行，请在安装后重启。
+Setup 会为 Codex 安装或更新当前发布的全部 WaveInflu Skill，然后通过隐藏输入接收 Key。完成后重启 Codex。
 
-### 3. 安全传入 Key
-
-在即将启动 Agent 的同一个终端中设置 Key：
+需要安装到其他受支持的 Agent 时：
 
 ```bash
-printf 'WaveInflu API Key: '
-IFS= read -rs WAVEINFLU_API_KEY
-printf '\n'
-export WAVEINFLU_API_KEY
+npx @waveinflu/setup@latest --agent claude-code
 ```
 
-PowerShell 7：
+WaveInflu 发布更新后，重新运行同一条 Setup 命令即可。它会刷新已有 WaveInflu Skill、安装后来新增的 Skill，并保留现有 Key。需要更换 Key 时运行：
 
-```powershell
-$env:WAVEINFLU_API_KEY = Read-Host "WaveInflu API Key" -MaskInput
+```bash
+npx @waveinflu/setup@latest --reconfigure
 ```
 
-不要把 Key 粘贴到对话中、提交到 Git，或暴露在客户端代码里。设置完成后，从这个终端启动 Agent。
+Key 会保存在当前用户的配置目录，并设置为仅当前用户可读。不要把 Key 粘贴到对话中、作为命令参数传入、提交到 Git，或暴露在客户端代码中。CI 和自动化环境仍可用 `WAVEINFLU_API_KEY` 覆盖本地配置。
 
-### 4. 直接描述需求
+### 3. 直接描述需求
 
 ```text
 $waveinflu-discover-creators
@@ -94,6 +89,7 @@ $waveinflu-lookup-creator-email
 ```bash
 npx skills add . --list
 npm run check
+npm pack --dry-run --workspace @waveinflu/setup
 ```
 
 测试使用本地 Mock Server，不会调用 WaveInflu 生产 API。

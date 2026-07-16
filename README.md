@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Give your Agent two focused WaveInflu capabilities—creator discovery and public contact lookup—without running an MCP server or installing a WaveInflu CLI.
+Give your Agent two focused WaveInflu capabilities—creator discovery and public contact lookup—without running an MCP server. A one-time Setup command installs the Skills and stores the API Key outside your projects.
 
 | Skill | What it does | Quota pool |
 |---|---|---|
@@ -20,34 +20,29 @@ Requires Node.js 22 or newer.
 3. Enter a name and issue a Key.
 4. Copy it immediately—the full Key is shown only once.
 
-### 2. Install both Skills
+### 2. Run Setup
 
 ```bash
-npx skills add WaveInflu/skills --global
+npx @waveinflu/setup@latest
 ```
 
-Restart your Agent if it was already running.
+Setup installs or updates every published WaveInflu Skill for Codex, then asks for the Key through a hidden prompt. Restart Codex when it finishes.
 
-### 3. Pass the Key securely
-
-Set the Key in the same terminal that will launch your Agent:
+Use another supported Agent when needed:
 
 ```bash
-printf 'WaveInflu API Key: '
-IFS= read -rs WAVEINFLU_API_KEY
-printf '\n'
-export WAVEINFLU_API_KEY
+npx @waveinflu/setup@latest --agent claude-code
 ```
 
-PowerShell 7:
+Run the same Setup command again whenever WaveInflu publishes an update. It refreshes existing WaveInflu Skills, installs newly added ones, and keeps the existing Key. To replace the Key:
 
-```powershell
-$env:WAVEINFLU_API_KEY = Read-Host "WaveInflu API Key" -MaskInput
+```bash
+npx @waveinflu/setup@latest --reconfigure
 ```
 
-Do not paste the Key into a chat, commit it, or expose it in client-side code. Then launch your Agent from this terminal.
+The Key is stored in the user configuration directory with user-only permissions. Do not paste it into a chat, pass it as a command argument, commit it, or expose it in client-side code. `WAVEINFLU_API_KEY` remains available as an environment override for CI and automation.
 
-### 4. Ask naturally
+### 3. Ask naturally
 
 ```text
 $waveinflu-discover-creators
@@ -94,6 +89,7 @@ Node.js 22 or newer is required. The bundled scripts use only built-in Node.js A
 ```bash
 npx skills add . --list
 npm run check
+npm pack --dry-run --workspace @waveinflu/setup
 ```
 
 The test suite uses a local mock server and never calls the production WaveInflu API.

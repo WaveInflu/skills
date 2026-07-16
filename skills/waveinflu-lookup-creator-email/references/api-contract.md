@@ -21,9 +21,9 @@ X-WaveInflu-Api-Key: $WAVEINFLU_API_KEY
 Content-Type: application/json
 ```
 
-Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. Keep the key in the environment; a valid issued key has the `waveInflu_` prefix followed by 40 URL-safe characters.
+Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. A valid issued Key has the `waveInflu_` prefix followed by 40 URL-safe characters.
 
-To issue a key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new key immediately. The full value is shown only once. Set it as `WAVEINFLU_API_KEY` in the environment that launches the Agent; never paste it into chat.
+To issue a Key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new Key immediately. The full value is shown only once. Run `npx @waveinflu/setup@latest` in a terminal to install or update the Skills and save the Key outside project directories. Never paste it into chat. `WAVEINFLU_API_KEY` is an optional CI/automation override.
 
 This is a synchronous, quota-charging POST. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically.
 
@@ -150,7 +150,7 @@ Error responses normally use `{ "code": number, "message": string, "error": ... 
 | HTTP | Meaning | Charging semantics | Agent action |
 |---|---|---|---|
 | 400 | Missing or unsupported creator URL | Rejected before quota consumption. | Ask for one supported URL that directly identifies the creator; do not guess or auto-resubmit. |
-| 401 | Missing, invalid, or revoked API key | Auth fails before quota consumption. | Configure or replace `WAVEINFLU_API_KEY` outside chat. |
+| 401 | Missing, invalid, or revoked API Key | Auth fails before quota consumption. | Run Setup with `--reconfigure` outside chat. |
 | 403 | Insufficient email quota | No quota consumed and no lookup started. | Report the separate email-quota shortage. |
 | 500+ | Lookup/provider/refund pipeline failure | The service attempts a refund after a post-consumption lookup failure; client-observed outcome may still be unknown. | Report the safe error and do not retry automatically. |
 

@@ -26,7 +26,7 @@ JSON
 
 ## Enforce the quota-charging boundary
 
-- Read the key only from `WAVEINFLU_API_KEY`. Never request it in chat, print it, place it in JSON, or write it to a project file.
+- Let the bundled script load the Key from WaveInflu's user-level credentials. `WAVEINFLU_API_KEY` may override it for CI or automation. Never request a Key in chat, print it, place it in JSON, or write it to a project file.
 - Submit at most one profile and one quota-charging POST per user instruction. Never batch, loop, paginate, retry, try URL variants, switch platforms, or broaden the task automatically.
 - Treat a timeout or network failure as an unknown quota outcome. Do not rerun the script because a tool invocation timed out.
 - Make another POST only after a new, explicit user instruction. If the script reports `requestSent: false`, correct the local URL and rerun it; no POST occurred. Do not substitute another profile.
@@ -37,4 +37,4 @@ JSON
 
 - Treat `email: null` and `emails: []` as a successful quota-charging lookup with no public email found.
 - For `requestSent: true` or `"unknown"`, report the error and that no automatic retry occurred.
-- For missing or invalid credentials, tell the user to sign in to the WaveInflu extension, open **API** in the right sidebar, issue and immediately copy a key, then set `WAVEINFLU_API_KEY` outside the conversation.
+- For missing or invalid credentials, tell the user to sign in to the WaveInflu extension, open **API** in the right sidebar, issue and immediately copy a Key, then run `npx @waveinflu/setup@latest --reconfigure` in a terminal. Never ask them to paste the Key into chat.

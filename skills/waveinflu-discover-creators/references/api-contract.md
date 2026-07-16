@@ -22,9 +22,9 @@ X-WaveInflu-Api-Key: $WAVEINFLU_API_KEY
 Content-Type: application/json
 ```
 
-Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. Keep the key in the environment; a valid key has the `waveInflu_` prefix followed by 40 URL-safe characters.
+Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. A valid Key has the `waveInflu_` prefix followed by 40 URL-safe characters.
 
-To issue a key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new key immediately. The full value is shown only once. Set it as `WAVEINFLU_API_KEY` in the environment that launches the Agent; never paste it into chat.
+To issue a Key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new Key immediately. The full value is shown only once. Run `npx @waveinflu/setup@latest` in a terminal to install or update the Skills and save the Key outside project directories. Never paste it into chat. `WAVEINFLU_API_KEY` is an optional CI/automation override.
 
 The endpoint is synchronous and quota-charging. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically. The script sends a random `X-Request-Id` for support correlation and application responses normally echo it. This ID is diagnostic only and does not make a request idempotent.
 
@@ -246,7 +246,7 @@ Error responses normally use `{ "code": number, "message": string, "error": ... 
 | HTTP | Point in flow | Charging semantics | Agent action |
 |---|---|---|---|
 | 400 | JSON, schema, seed-format, or filter validation | Route-level validation is rejected before reservation. A source-resolution error after reservation triggers an attempted full refund. | Correct only local/schema mistakes; do not change intent or resubmit automatically. |
-| 401 | Missing, invalid, or revoked API key | Auth fails before reservation. | Configure or replace `WAVEINFLU_API_KEY` outside chat. |
+| 401 | Missing, invalid, or revoked API Key | Auth fails before reservation. | Run Setup with `--reconfigure` outside chat. |
 | 403 | Insufficient main quota | Reservation is not consumed. | Report insufficient main quota; do not lower `limit` and retry automatically. |
 | 500+ | Retrieval or settlement failure | If quota was reserved, the service attempts a full refund; a client-side timeout still leaves the outcome unknown. | Report the error and request ID when available; do not retry automatically. |
 

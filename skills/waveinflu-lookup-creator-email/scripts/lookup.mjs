@@ -2,13 +2,14 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { loadApiKey } from './credentials.mjs';
+
 const DEFAULT_API_ORIGIN = 'https://api.wavely.cc';
 const API_PATH = '/api/v1/email-lookup';
 const MAX_INPUT_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
-const CLIENT_VERSION = '0.2.0';
-const API_KEY_PATTERN = /^waveInflu_[A-Za-z0-9_-]{40}$/;
+const CLIENT_VERSION = '0.3.0';
 const RESERVED_INSTAGRAM_PATHS = new Set([
   'p',
   'reel',
@@ -298,9 +299,12 @@ const main = async () => {
     throw new InputError('Node.js 22 or newer is required.');
   }
 
-  const apiKey = process.env.WAVEINFLU_API_KEY?.trim();
-  if (!apiKey) throw new InputError('WAVEINFLU_API_KEY is not set.');
-  if (!API_KEY_PATTERN.test(apiKey)) throw new InputError('WAVEINFLU_API_KEY has an invalid format.');
+  let apiKey;
+  try {
+    apiKey = await loadApiKey();
+  } catch (error) {
+    throw new InputError(error.message);
+  }
 
   const payload = sanitizeInput(await readInput());
   const endpoint = buildEndpoint();

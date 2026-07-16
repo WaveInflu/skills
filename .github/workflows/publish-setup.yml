@@ -1,0 +1,28 @@
+name: Publish Setup
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: startsWith(github.event.release.tag_name, 'setup-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.18.0
+      - run: npm run check
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: node -e "const expected='setup-v'+require('./packages/setup/package.json').version; if(process.env.RELEASE_TAG!==expected) throw new Error('Expected tag '+expected)"
+      - run: npm publish --workspace @waveinflu/setup
