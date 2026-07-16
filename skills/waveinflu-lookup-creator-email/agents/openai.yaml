@@ -1,4 +1,4 @@
 interface:
   display_name: "WaveInflu Creator Email Lookup"
-  short_description: "Look up public creator business emails safely"
-  default_prompt: "Use $waveinflu-lookup-creator-email to look up the public business email for this creator profile."
+  short_description: "Find one creator's public contact details"
+  default_prompt: "Use $waveinflu-lookup-creator-email to find the public contact details for this creator profile."

@@ -1,6 +1,20 @@
 # Creator discovery API contract
 
-## Request
+## Contents
+
+- [Endpoint and authentication](#endpoint-and-authentication)
+- [Bundled-script boundary](#bundled-script-boundary)
+- [Request](#request)
+- [Modes and seed URLs](#modes-and-seed-urls)
+- [Filters and retrieval rules](#filters-and-retrieval-rules)
+- [Deduplication and ranking](#deduplication-and-ranking)
+- [Quota settlement](#quota-settlement)
+- [Response](#response)
+- [Email field](#email-field)
+- [Errors and charging](#errors-and-charging)
+- [Bundled-script errors](#bundled-script-errors)
+
+## Endpoint and authentication
 
 ```text
 POST https://api.wavely.cc/api/v1/similar
@@ -8,99 +22,246 @@ X-WaveInflu-Api-Key: $WAVEINFLU_API_KEY
 Content-Type: application/json
 ```
 
-This is a synchronous, quota-charging POST with no idempotency key. Never retry it automatically.
+Only `X-WaveInflu-Api-Key` authenticates this route. Generic `X-Api-Key` and bearer headers are not accepted. Keep the key in the environment; a valid key has the `waveInflu_` prefix followed by 40 URL-safe characters.
 
-The bundled script accepts only the fields documented below, rebuilds a clean payload, sends one request, rejects redirects, and limits response size. `WAVEINFLU_API_BASE_URL` is restricted to loopback hosts for local tests and must remain unset in normal use.
+To issue a key, sign in to the WaveInflu browser extension, open **API** in its right sidebar, enter a name, and copy the new key immediately. The full value is shown only once. Set it as `WAVEINFLU_API_KEY` in the environment that launches the Agent; never paste it into chat.
+
+The endpoint is synchronous and quota-charging. It does not accept an idempotency key or `maxQuotaCost`. Do not retry it automatically. The script sends a random `X-Request-Id` for support correlation and application responses normally echo it. This ID is diagnostic only and does not make a request idempotent.
+
+## Bundled-script boundary
+
+The bundled script is the required Skill execution path. It rebuilds a clean payload, makes exactly one POST, rejects redirects, limits input and response sizes, and never retries.
+
+It is intentionally stricter than the raw API:
+
+| Concern | Raw API | Bundled script |
+|---|---|---|
+| `platform` | Defaults to `youtube` when omitted. | Must be explicitly `youtube`, `tiktok`, or `instagram`. |
+| Numeric input | Some numeric strings are coerced. | `limit` and numeric filters must be JSON integers. |
+| Seed protocol | Backend validation accepts HTTP or HTTPS supported URLs. | Requires HTTPS and rejects credentials or custom ports. |
+| Fields | Top-level and `filters` objects are strict. | Applies the same allowlist before anything is sent. |
+| API key | Authenticates an active issued key. | Also checks the exact issued-key format locally. |
+| Runtime | Any conforming HTTP client can call the API. | Requires Node.js 22 or newer. |
+
+`WAVEINFLU_API_BASE_URL` is only a local-test override and is restricted to loopback hosts. Leave it unset in normal use.
+
+## Request
 
 | Field | Type | Rules |
 |---|---|---|
-| `platform` | string | Required: `youtube`, `tiktok`, or `instagram`. |
-| `seedProfileUrl` | string | Optional for YouTube/TikTok; unsupported for Instagram. |
-| `contentDirection` | string | Maximum 800 characters; required without a seed and always required for Instagram. |
+| `platform` | `youtube \| tiktok \| instagram` | Required by the script. |
+| `seedProfileUrl` | string | YouTube/TikTok only; maximum 256 characters. |
+| `contentDirection` | string | Plain-language campaign brief; maximum 800 characters. |
 | `limit` | integer | Default 25; range 1–100. |
-| `globalDeduplicationEnabled` | boolean | Default `true`; excludes up to 1,000 recently viewed creators. |
-| `filters` | object | Optional platform-specific filters below. |
+| `globalDeduplicationEnabled` | boolean | Default `true`. |
+| `filters` | object | Optional strict object; supported keys are listed below. |
+
+For `contentDirection`, preserve the user's campaign intent as prose. Do not add inferred demographic requirements or silently broaden the brief.
+
+## Modes and seed URLs
+
+| Platform | Inputs | Returned `mode` |
+|---|---|---|
+| YouTube/TikTok | `contentDirection` only | `direction` |
+| YouTube/TikTok | `seedProfileUrl` only | `homepage` |
+| YouTube/TikTok | seed plus direction | `homepage_direction` |
+| Instagram | `contentDirection` only | `direction` |
+
+Instagram rejects `seedProfileUrl` and always requires `contentDirection`.
+
+The bundled script accepts these HTTPS seeds:
+
+- YouTube handle: `https://www.youtube.com/@handle`, optionally ending in `/videos`, `/shorts`, `/streams`, `/about`, or `/featured`.
+- YouTube channel ID: `https://www.youtube.com/channel/UC...`, optionally with the same suffixes.
+- TikTok profile: `https://www.tiktok.com/@uniqueId`. Content/video URLs are rejected.
+
+The script canonicalizes supported `m.` and non-`www` hosts to `www` before submission.
+
+## Filters and retrieval rules
 
 ### Common filters
 
-- `regions`: ISO alpha-2 country codes such as `US`, `GB`, or `JP`.
-- `languages`: BCP 47-like language codes such as `en` or `ja`; maximum 50.
-- `minFollowers`, `maxFollowers`: both must meet the platform minimum and min cannot exceed max.
+| Field | Type | Rules |
+|---|---|---|
+| `regions` | string[] | Valid ISO alpha-2 countries; normalized to uppercase. |
+| `languages` | string[] | BCP 47-like codes, each at most 20 characters; normalized to lowercase; at most 50 values. |
+| `minFollowers` / `maxFollowers` | non-negative integer | Both obey the platform floor; min cannot exceed max. |
 
-### YouTube filters
+Empty arrays are omitted by the script. Duplicate region, language, and enum values are removed locally.
 
-- Minimum followers: 500.
-- `minVideosAverageViews`, `maxVideosAverageViews`: minimum 2,000.
+### Platform filter matrix
 
-### TikTok filters
+| Platform | Follower floor | Engagement filters | Engagement floor | Fixed active window |
+|---|---:|---|---:|---:|
+| YouTube | 500 | `minVideosAverageViews`, `maxVideosAverageViews` | 2,000 average views | Last 183 days |
+| TikTok | 1,000 | `minVideosAverageViews`, `maxVideosAverageViews` | 1,000 average plays | Last 90 days |
+| Instagram | 500 | `minAverageLikeCount`, `maxAverageLikeCount` | 50 average likes | Last 365 days |
 
-- Minimum followers: 1,000.
-- `minVideosAverageViews`, `maxVideosAverageViews`: minimum 1,000.
+The active window is fixed by the backend and is not a public request field. Instagram rejects average-view filters. YouTube and TikTok reject Instagram-only engagement and demographic filters.
 
-### Instagram filters
+### Instagram enum filters
 
-- Minimum followers: 500.
-- `minAverageLikeCount`, `maxAverageLikeCount`: minimum 50.
 - `genders`: `male`, `female`, `unknown`.
 - `ethnicities`: `white`, `black`, `asian`, `hispanic_latino`, `middle_eastern`, `indigenous`, `pacific_islander`, `multiracial`, `unknown`.
 - `creatorTypes`: `solo_creator`, `couple`, `family`, `group`, `product_only`, `brand_account`, `unknown`.
-- Do not send the YouTube/TikTok average-view filters.
+
+These are hard filters. Send them only when the user explicitly asks for the corresponding constraint.
+
+## Deduplication and ranking
+
+- With `globalDeduplicationEnabled: true`, the backend excludes up to the 1,000 most recently viewed creators for the same user and platform.
+- Returned creators are scheduled to be marked as viewed. Marking is best-effort and may complete after the HTTP response.
+- Results are deduplicated by platform user ID, keeping the highest-scoring hit, then sorted by descending score.
+- YouTube and TikTok return scores greater than or equal to `0.7`.
+- Instagram returns scores strictly greater than `0.85`.
+- `total` is the final `data.length` after score filtering, deduplication, and the requested limit.
+
+Setting global deduplication to `false` only disables viewed-history exclusion; it does not disable result-set deduplication.
+
+## Quota settlement
+
+Creator discovery uses the main creator-search quota, not email lookup quota.
+
+| Platform | Valid creators per credit (`r`) | Reserved before retrieval | Charged after success |
+|---|---:|---:|---:|
+| YouTube | 3 | `ceil(limit / 3)` | `ceil(total / 3)` |
+| TikTok | 5 | `ceil(limit / 5)` | `ceil(total / 5)` |
+| Instagram | 2 | `ceil(limit / 2)` | `ceil(total / 2)` |
+
+For `total = 0`, charged quota is 0. The normal successful settlement is:
+
+```text
+refundQuota = reservedQuota - chargedQuota
+```
+
+The account must have enough main quota for the full reservation before retrieval begins. Unused reservation is refunded synchronously; `refundStatus` is `completed` when a refund occurred and `not_required` when none was needed.
+
+State the deterministic reservation before the call, but always report the server-returned `quota` object as final. The Skill has no server-enforced per-request spend ceiling beyond `limit` and these formulas.
 
 ## Response
 
-Successful responses use this envelope:
+Success uses the standard envelope:
 
 ```json
 {
   "code": 1000,
   "message": "Similar creators completed",
   "data": {
-    "requestId": "req_abc123",
+    "requestId": "123e4567-e89b-42d3-a456-426614174000",
     "platform": "tiktok",
     "mode": "direction",
+    "contentDirection": "US skincare creators",
     "total": 1,
-    "data": [],
+    "data": [
+      {
+        "username": "Example Creator",
+        "platform": "tiktok",
+        "platformHandle": "@example",
+        "userId": "7300000000000000000",
+        "uniqueId": "example",
+        "nickname": "Example Creator",
+        "description": "Practical skincare reviews",
+        "email": "",
+        "profileUrl": "https://www.tiktok.com/@example",
+        "avatar": "https://example.invalid/avatar.jpg",
+        "similarityScore": 0.91,
+        "followerCount": 25000,
+        "averagePlayCount": 8000,
+        "region": "US",
+        "language": "en"
+      }
+    ],
     "quota": {
       "totalQuota": 100,
-      "usedQuota": 1,
-      "remainingQuota": 99,
-      "reservedQuota": 4,
+      "usedQuota": 11,
+      "remainingQuota": 89,
+      "reservedQuota": 1,
       "chargedQuota": 1,
-      "refundQuota": 3,
-      "refundStatus": "completed"
+      "refundQuota": 0,
+      "refundStatus": "not_required"
     }
   }
 }
 ```
 
-Creators share `username`, `platform`, `platformHandle`, `description`, `email`, `profileUrl`, `avatar`, `similarityScore`, and optional follower/engagement/region/language fields. Platform identity fields are `channelId` for YouTube and `userId` plus `uniqueId` for TikTok/Instagram.
+### Search result fields
 
-## Quota
-
-Quota is reserved from `limit`, charged from valid results, and the unused reservation is refunded synchronously:
-
-- YouTube: 1 credit per 3 valid creators.
-- TikTok: 1 credit per 5 valid creators.
-- Instagram: 1 credit per 2 valid creators.
-
-Always report the server-provided final quota values; do not estimate them locally.
-
-## Errors
-
-| HTTP | Meaning | Agent action |
+| Field | Type | Meaning |
 |---|---|---|
-| 400 | Invalid payload or filter | Explain the invalid field. Do not resubmit without user-approved material changes. |
-| 401 | Missing, invalid, or revoked API key | Ask the user to configure or replace the environment variable outside chat. |
-| 403 | Insufficient main quota | Report the quota error; do not reduce `limit` and retry automatically. |
-| 429 | Rate limited | Report `Retry-After` if available; do not schedule an automatic retry. |
-| 500+ | Server/provider failure | Preserve `requestId` if present and report it; do not retry automatically. |
+| `requestId` | string | WaveInflu request ID for support and monitoring. |
+| `platform` | enum | Platform used for retrieval and response formatting. |
+| `mode` | enum | `direction`, `homepage`, or `homepage_direction`. |
+| `seedProfileUrl` | string, optional | Returned when a seed was supplied. |
+| `sourceUserId` | string, optional | Resolved source channel/user ID for seed modes. |
+| `contentDirection` | string, optional | Returned when a brief was supplied. |
+| `total` | integer | Number of returned creators; equals `data.length`. |
+| `data` | array | Ranked creators. |
+| `quota.totalQuota` | number | Main quota allocation after settlement. |
+| `quota.usedQuota` | number | Main quota used after settlement. |
+| `quota.remainingQuota` | number | Main quota remaining after settlement. |
+| `quota.reservedQuota` | number | Amount reserved from `limit`. |
+| `quota.chargedQuota` | number | Amount charged from `total`. |
+| `quota.refundQuota` | number | Unused reservation returned. |
+| `quota.refundStatus` | enum | `not_required` or `completed`. |
 
-## Bundled script errors
+### Fields common to every creator
 
-Errors are written as JSON to stderr with a non-zero exit code. `autoRetryAllowed` is always `false`.
+| Field | Type | Meaning |
+|---|---|---|
+| `username` | string | Display name or username. |
+| `platform` | enum | `youtube`, `tiktok`, or `instagram`. |
+| `platformHandle` | string | Platform-formatted handle. |
+| `description` | string | Description, signature, or generated creator profile; may be empty. |
+| `email` | string | Publicly discoverable contact email; empty when unavailable. |
+| `profileUrl` | string | Normalized profile URL. |
+| `avatar` | string | Avatar URL; may be empty. |
+| `similarityScore` | number | Match score used for ranking. |
+| `followerCount` | number, optional | Followers/subscribers when available. |
+| `averagePlayCount` | number, optional | Average views/plays when available. |
+| `averageLikeCount` | number, optional | Average likes when available. |
+| `lastPublishedTime` | number, optional | Unix timestamp in seconds. |
+| `region` | string, optional | Normalized creator region when available. |
+| `language` | string, optional | Creator language when available. |
 
-- `requestSent: false`: local validation failed before any API submission.
-- `requestSent: true`: the server received the request, but returned an HTTP or response error.
-- `requestSent: "unknown"`: a timeout, redirect rejection, or network failure occurred after the request attempt began.
+### Platform fields
 
-Only `requestSent: false` is safe to correct locally without risking a duplicate charge. It is not permission to change the user's intended filters or count.
+| Platform | Fields |
+|---|---|
+| YouTube | `channelId` (string), `channelTitle` (string). |
+| TikTok | `userId` (string), `uniqueId` (string), `nickname` (optional string). |
+| Instagram | `userId` (string); optional `fullName`, `biography`, `followingCount`, `gender`, `ethnicity`, `creatorType`, `faceVisibility`, `contentVerticals`, `contentFormats`, `visualStyles`. |
+
+Instagram `faceVisibility` values are `clear_face`, `partial_face`, `no_face`, `mixed`, or `unknown`. The three content-profile fields are optional string arrays.
+
+## Email field
+
+For YouTube and TikTok, WaveInflu may hydrate `email` from cached creator-email inventory; Instagram uses the email already stored with its creator inventory. This discovery response does not run a separate quota-charging email lookup.
+
+An email can be empty, stale, or associated with publicly visible contact data without proving account ownership. Never call the email-lookup Skill automatically when this field is empty.
+
+## Errors and charging
+
+Error responses normally use `{ "code": number, "message": string, "error": ... }`. Messages can be localized; rely on HTTP status, business code, and safe error details.
+
+| HTTP | Point in flow | Charging semantics | Agent action |
+|---|---|---|---|
+| 400 | JSON, schema, seed-format, or filter validation | Route-level validation is rejected before reservation. A source-resolution error after reservation triggers an attempted full refund. | Correct only local/schema mistakes; do not change intent or resubmit automatically. |
+| 401 | Missing, invalid, or revoked API key | Auth fails before reservation. | Configure or replace `WAVEINFLU_API_KEY` outside chat. |
+| 403 | Insufficient main quota | Reservation is not consumed. | Report insufficient main quota; do not lower `limit` and retry automatically. |
+| 500+ | Retrieval or settlement failure | If quota was reserved, the service attempts a full refund; a client-side timeout still leaves the outcome unknown. | Report the error and request ID when available; do not retry automatically. |
+
+Any service failure after a successful reservation follows the same attempted-full-refund path, regardless of whether its final HTTP status is 400 or 500+. Do not infer refund success from an interrupted client connection.
+
+HTTP 429 is not currently a documented per-key contract for this route. Handle it defensively if an edge or future service returns it: report `Retry-After` when available and do not schedule or perform a retry.
+
+## Bundled-script errors
+
+The script writes structured JSON to stderr, exits non-zero, and always sets `autoRetryAllowed: false`.
+
+- `requestSent: false`: local validation failed before any POST. Correct the payload locally without changing user intent.
+- `requestSent: true`: the API returned an HTTP error or an unreadable/invalid response after the POST.
+- `requestSent: "unknown"`: the request attempt encountered a timeout, redirect, or network failure; it may have reached the API and charged quota.
+
+Post-attempt errors include the generated or echoed top-level `requestId` for correlation when available. It must never be used as permission to retry.
+
+Only `requestSent: false` is safe to correct without duplicate-charge risk.

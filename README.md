@@ -1,55 +1,36 @@
 # WaveInflu Skills
 
-English | [简体中文](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md)
 
-Official Agent Skills for finding similar creators and looking up public creator business emails with the WaveInflu API.
+Give your Agent two focused WaveInflu capabilities—creator discovery and public contact lookup—without running an MCP server or installing a WaveInflu CLI.
 
-| Skill | Capability | Quota |
+| Skill | What it does | Quota pool |
 |---|---|---|
-| `waveinflu-discover-creators` | Find similar YouTube, TikTok, or Instagram creators | Main quota |
-| `waveinflu-lookup-creator-email` | Look up one creator's public business email and contact links | Email quota |
+| `waveinflu-discover-creators` | Finds similar YouTube, TikTok, and Instagram creators | Main quota |
+| `waveinflu-lookup-creator-email` | Looks up one creator's public contact email and links | Email quota |
 
-Both API operations are quota-charging POST requests. The bundled Node.js scripts make exactly one request, never retry automatically, and return the server-reported remaining quota.
+Requires Node.js 22 or newer.
 
-## Requirements
+## Quick start
 
-- Node.js 22 or newer.
-- A WaveInflu API key created in the WaveInflu extension.
-- Codex, Claude Code, Cursor, or another agent compatible with Agent Skills.
+### 1. Create an API Key
 
-No WaveInflu CLI or MCP server is required.
+1. [Install WaveInflu from the Chrome Web Store](https://chromewebstore.google.com/detail/waveinflu/memenfegdnhmjipjnfndoncinlcpfenf) and sign in.
+2. Open **API** in the extension's right sidebar.
+3. Enter a name and issue a Key.
+4. Copy it immediately—the full Key is shown only once.
 
-## Install
-
-Install both skills globally for detected agents:
-
-```bash
-npx skills add waveinflu/skills --global
-```
-
-Install both skills for Codex without prompts:
+### 2. Install both Skills
 
 ```bash
-npx skills add waveinflu/skills \
-  --global \
-  --agent codex \
-  --skill waveinflu-discover-creators waveinflu-lookup-creator-email \
-  --yes
+npx skills add WaveInflu/skills --global
 ```
 
-For local development, list the skills from a checkout without installing them:
+Restart your Agent if it was already running.
 
-```bash
-npx skills add /absolute/path/to/waveinflu-skills --list
-```
+### 3. Pass the Key securely
 
-Restart the agent if it does not detect newly installed skills.
-
-## Configure the API key
-
-Set the key only in the terminal that launches the agent. Do not paste it into an AI conversation, commit it, or save it in a project `.env` file.
-
-macOS or Linux with Bash/Zsh:
+Set the Key in the same terminal that will launch your Agent:
 
 ```bash
 printf 'WaveInflu API Key: '
@@ -64,63 +45,57 @@ PowerShell 7:
 $env:WAVEINFLU_API_KEY = Read-Host "WaveInflu API Key" -MaskInput
 ```
 
-Launch the agent from the same terminal, for example:
+Do not paste the Key into a chat, commit it, or expose it in client-side code. Then launch your Agent from this terminal.
 
-```bash
-codex
-```
-
-## Use
-
-Explicit creator discovery:
+### 4. Ask naturally
 
 ```text
 $waveinflu-discover-creators
 Find 20 TikTok creators similar to https://www.tiktok.com/@example for a US skincare campaign.
 ```
 
-Explicit email lookup:
-
 ```text
 $waveinflu-lookup-creator-email
-Find the public business email for https://www.youtube.com/@example.
+Find the public contact email for https://www.youtube.com/@example.
 ```
 
-Natural-language requests can also trigger the matching skill automatically. Before a quota-charging call, the agent states the requested count or lookup quota cost. A timeout or malformed response is treated as an unknown quota outcome and is never retried without a new user request.
+You can also omit the `$skill-name` prefix and ask in natural language when your Agent can match installed Skills. Discovery accepts a profile, a campaign brief, or both for YouTube and TikTok; Instagram discovery uses a campaign brief. Email lookup accepts one supported creator URL per request.
 
-## Security and billing behavior
+## Quota behavior
 
-- The API key is read only from `WAVEINFLU_API_KEY` and is never accepted in stdin JSON.
-- Production requests are fixed to `https://api.wavely.cc`; redirects are rejected so the key cannot be forwarded to another origin.
-- `WAVEINFLU_API_BASE_URL` accepts loopback hosts only and exists solely for local tests. End users should leave it unset.
-- Input is rebuilt from strict allowlists before submission. Unknown fields are rejected locally.
-- Empty results, HTTP errors, timeouts, and response errors do not trigger retries, pagination, filter broadening, or cross-platform calls.
-- If a key may have leaked, revoke it in WaveInflu and issue a replacement. Do not post it in a public issue.
+Main quota and email quota are separate balances.
 
-## Update or remove
+| Operation | Quota rule |
+|---|---|
+| YouTube discovery | 1 main quota per 3 valid results |
+| TikTok discovery | 1 main quota per 5 valid results |
+| Instagram discovery | 1 main quota per 2 valid results |
+| TikTok email lookup | 1 email quota |
+| Instagram or YouTube email lookup | 2 email quota |
+
+Discovery reserves `ceil(requested limit ÷ platform ratio)` before recall, then charges `ceil(valid results ÷ platform ratio)` and refunds the unused reservation. Zero valid results cost zero main quota. An email lookup consumes its platform cost even when no public email is found.
+
+Before calling, the Agent summarizes the scope and expected reservation or lookup cost. After a successful call, it reports the remaining balance returned by the server.
+
+Both Skills send one quota-consuming POST request at a time. They never retry, paginate, broaden filters, or switch platforms automatically. After a timeout or malformed response, quota status is unknown; submit a new request only after you decide to try again.
+
+## Documentation
+
+- [API overview](https://wavely.cc/docs/api)
+- [Email Lookup API](https://wavely.cc/docs/api/email-lookup)
+- Similar Creators API: [YouTube](https://wavely.cc/docs/api/similar/youtube) · [TikTok](https://wavely.cc/docs/api/similar/tiktok) · [Instagram](https://wavely.cc/docs/api/similar/instagram)
+- [MIT License](LICENSE)
+
+<details>
+<summary>Development</summary>
+
+Node.js 22 or newer is required. The bundled scripts use only built-in Node.js APIs.
 
 ```bash
-npx skills update --global \
-  waveinflu-discover-creators \
-  waveinflu-lookup-creator-email
-```
-
-```bash
-npx skills remove --global \
-  waveinflu-discover-creators \
-  waveinflu-lookup-creator-email
-```
-
-## Development
-
-The scripts use only Node.js built-in APIs. Run syntax checks and local mock-server tests with:
-
-```bash
+npx skills add . --list
 npm run check
 ```
 
-The test suite never calls the production WaveInflu API or consumes quota.
+The test suite uses a local mock server and never calls the production WaveInflu API.
 
-## License
-
-The Skill content and bundled client scripts are available under the [MIT License](LICENSE). The license does not grant API access or alter WaveInflu authentication, quota, billing, data-use, or service terms.
+</details>

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto';
+
 const DEFAULT_API_ORIGIN = 'https://api.wavely.cc';
 const API_PATH = '/api/v1/similar';
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 180_000;
-const CLIENT_VERSION = '0.1.0';
+const CLIENT_VERSION = '0.2.0';
 const API_KEY_PATTERN = /^waveInflu_[A-Za-z0-9_-]{40}$/;
 const TOP_LEVEL_KEYS = new Set([
   'platform',
@@ -369,7 +371,7 @@ const readResponseBody = async (response) => {
       try {
         await reader.cancel();
       } catch {
-        // The paid request already completed; cancellation is best-effort only.
+        // The quota-charging request already completed; cancellation is best-effort only.
       }
       throw new ResponseBodyError('RESPONSE_TOO_LARGE', 'WaveInflu returned a response larger than 5 MiB.');
     }
@@ -411,21 +413,88 @@ const errorResponse = (payload) => {
   return Object.keys(summary).length ? summary : undefined;
 };
 
-const isNonNegativeNumber = (value) => Number.isFinite(value) && value >= 0;
+const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
+const isNonEmptyString = (value) => typeof value === 'string' && value.length > 0;
 
-const isValidSuccess = (payload, expectedPlatform) =>
-  isObject(payload) &&
-  payload.code === 1000 &&
-  isObject(payload.data) &&
-  typeof payload.data.requestId === 'string' &&
-  payload.data.requestId.length > 0 &&
-  payload.data.platform === expectedPlatform &&
-  Array.isArray(payload.data.data) &&
-  Number.isInteger(payload.data.total) &&
-  payload.data.total === payload.data.data.length &&
-  isObject(payload.data.quota) &&
-  isNonNegativeNumber(payload.data.quota.chargedQuota) &&
-  isNonNegativeNumber(payload.data.quota.remainingQuota);
+const isValidCreator = (creator, platform) => {
+  if (
+    !isObject(creator) ||
+    creator.platform !== platform ||
+    !isNonEmptyString(creator.username) ||
+    !isNonEmptyString(creator.platformHandle) ||
+    typeof creator.description !== 'string' ||
+    typeof creator.email !== 'string' ||
+    !isNonEmptyString(creator.profileUrl) ||
+    typeof creator.avatar !== 'string' ||
+    !Number.isFinite(creator.similarityScore)
+  ) {
+    return false;
+  }
+
+  if (platform === 'youtube') {
+    return isNonEmptyString(creator.channelId) && isNonEmptyString(creator.channelTitle);
+  }
+  if (platform === 'tiktok') {
+    return isNonEmptyString(creator.userId) && isNonEmptyString(creator.uniqueId);
+  }
+
+  return isNonEmptyString(creator.userId);
+};
+
+const expectedMode = (request) => {
+  if (!request.seedProfileUrl) return 'direction';
+  return request.contentDirection ? 'homepage_direction' : 'homepage';
+};
+
+const isValidQuota = (quota) =>
+  isObject(quota) &&
+  isNonNegativeInteger(quota.totalQuota) &&
+  isNonNegativeInteger(quota.usedQuota) &&
+  isNonNegativeInteger(quota.remainingQuota) &&
+  isNonNegativeInteger(quota.reservedQuota) &&
+  isNonNegativeInteger(quota.chargedQuota) &&
+  isNonNegativeInteger(quota.refundQuota) &&
+  isNonEmptyString(quota.refundStatus);
+
+const isValidSuccess = (response, request) => {
+  if (
+    !isObject(response) ||
+    response.code !== 1000 ||
+    typeof response.message !== 'string' ||
+    !isObject(response.data)
+  ) {
+    return false;
+  }
+
+  const result = response.data;
+  if (
+    !isNonEmptyString(result.requestId) ||
+    result.platform !== request.platform ||
+    result.mode !== expectedMode(request) ||
+    !Array.isArray(result.data) ||
+    !isNonNegativeInteger(result.total) ||
+    result.total !== result.data.length ||
+    !result.data.every((creator) => isValidCreator(creator, request.platform)) ||
+    !isValidQuota(result.quota)
+  ) {
+    return false;
+  }
+
+  if (request.seedProfileUrl) {
+    if (
+      result.seedProfileUrl !== request.seedProfileUrl ||
+      !isNonEmptyString(result.sourceUserId)
+    ) {
+      return false;
+    }
+  } else if (result.seedProfileUrl !== undefined || result.sourceUserId !== undefined) {
+    return false;
+  }
+
+  return request.contentDirection
+    ? result.contentDirection === request.contentDirection
+    : result.contentDirection === undefined;
+};
 
 const main = async () => {
   if (
@@ -442,6 +511,7 @@ const main = async () => {
 
   const payload = sanitizeInput(await readInput());
   const endpoint = buildEndpoint();
+  const correlationId = randomUUID();
 
   let response;
   requestAttempted = true;
@@ -453,6 +523,7 @@ const main = async () => {
         'Content-Type': 'application/json',
         'User-Agent': `waveinflu-skills/${CLIENT_VERSION}`,
         'X-WaveInflu-Api-Key': apiKey,
+        'X-Request-Id': correlationId,
       },
       body: JSON.stringify(payload),
       redirect: 'error',
@@ -463,15 +534,18 @@ const main = async () => {
       ok: false,
       requestSent: 'unknown',
       autoRetryAllowed: false,
+      requestId: correlationId,
       error: {
         type: error?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
-        message: 'The paid request outcome is unknown. Do not retry automatically.',
+        message: 'The quota outcome is unknown. Do not retry automatically.',
       },
     });
     return;
   }
 
   let text;
+  const requestId =
+    safeErrorText(response.headers.get('x-request-id')?.trim(), 256) ?? correlationId;
   try {
     text = await readResponseBody(response);
   } catch (error) {
@@ -480,9 +554,10 @@ const main = async () => {
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       error: {
         type: error instanceof ResponseBodyError ? error.type : 'RESPONSE_READ_ERROR',
-        message: 'The paid request completed, but its response could not be read. Do not retry automatically.',
+        message: 'The response could not be read, so the quota outcome is unknown. Do not retry automatically.',
       },
     });
     return;
@@ -497,6 +572,7 @@ const main = async () => {
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       ...(retryAfter ? { retryAfter } : {}),
       ...(responseError ? { response: responseError } : {}),
       error: { type: 'HTTP_ERROR', message: `WaveInflu API returned HTTP ${response.status}.` },
@@ -504,12 +580,13 @@ const main = async () => {
     return;
   }
 
-  if (!isValidSuccess(responsePayload, payload.platform)) {
+  if (!isValidSuccess(responsePayload, payload)) {
     fail({
       ok: false,
       requestSent: true,
       autoRetryAllowed: false,
       httpStatus: response.status,
+      ...(requestId ? { requestId } : {}),
       error: {
         type: 'INVALID_RESPONSE',
         message: 'WaveInflu returned an unexpected success response. Do not retry automatically.',

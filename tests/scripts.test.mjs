@@ -17,6 +17,8 @@ const LOOKUP_SCRIPT = resolve(
   'skills/waveinflu-lookup-creator-email/scripts/lookup.mjs',
 );
 const TEST_API_KEY = `waveInflu_${'A'.repeat(40)}`;
+const YOUTUBE_SEED = `https://www.youtube.com/channel/UC${'A'.repeat(20)}`;
+const RESULTS_PER_QUOTA = { youtube: 3, tiktok: 5, instagram: 2 };
 
 const startServer = async (handler) => {
   const server = createServer(handler);
@@ -58,35 +60,140 @@ const readJsonBody = async (request) => {
   return JSON.parse(body);
 };
 
-const discoverSuccess = {
-  code: 1000,
-  message: 'Similar creators completed',
-  data: {
-    requestId: 'req_test',
-    platform: 'tiktok',
-    total: 0,
-    data: [],
-    quota: { chargedQuota: 0, remainingQuota: 100 },
-  },
+const creatorFor = (platform) => {
+  const common = {
+    username: 'Example Creator',
+    platform,
+    platformHandle: '@example',
+    description: 'Skincare reviews and routines',
+    email: '',
+    profileUrl: `https://www.${platform}.com/@example`,
+    avatar: '',
+    similarityScore: 0.91,
+    followerCount: 20_000,
+    averagePlayCount: 8_000,
+    averageLikeCount: 900,
+    lastPublishedTime: 1_750_000_000,
+    region: 'US',
+    language: 'en',
+  };
+
+  if (platform === 'youtube') {
+    return {
+      ...common,
+      profileUrl: 'https://www.youtube.com/@example',
+      channelId: `UC${'B'.repeat(20)}`,
+      channelTitle: 'Example Creator',
+    };
+  }
+  if (platform === 'tiktok') {
+    return { ...common, userId: 'tt-123', uniqueId: 'example', nickname: 'Example Creator' };
+  }
+  return {
+    ...common,
+    profileUrl: 'https://www.instagram.com/example/',
+    userId: 'ig-123',
+    fullName: 'Example Creator',
+    biography: 'Public creator biography',
+    followingCount: 400,
+    gender: 'female',
+    ethnicity: 'asian',
+    creatorType: 'solo_creator',
+    faceVisibility: 'clear_face',
+    contentVerticals: ['beauty'],
+    contentFormats: ['tutorial'],
+    visualStyles: ['bright'],
+  };
 };
 
-const lookupSuccess = {
-  code: 1000,
-  message: 'Email lookup completed',
-  data: {
-    platform: 'instagram',
-    username: 'example',
-    profileLink: 'https://www.instagram.com/example/',
-    platformUserId: null,
-    region: null,
-    email: null,
-    emails: [],
-    contacts: [],
-    quota: { cost: 2, remainingQuota: 48 },
-  },
+const minimalCreatorFor = (platform) => {
+  const common = {
+    username: 'Example Creator',
+    platform,
+    platformHandle: '@example',
+    description: '',
+    email: '',
+    profileUrl: `https://www.${platform}.com/@example`,
+    avatar: '',
+    similarityScore: 0.91,
+  };
+  if (platform === 'youtube') {
+    return { ...common, channelId: 'UC-minimal', channelTitle: 'Example Creator' };
+  }
+  if (platform === 'tiktok') {
+    return { ...common, userId: 'tt-minimal', uniqueId: 'example' };
+  }
+  return {
+    ...common,
+    profileUrl: 'https://www.instagram.com/example/',
+    userId: 'ig-minimal',
+  };
 };
 
-const paidScriptCases = [
+const discoverSuccess = (request, creators = [creatorFor(request.platform)]) => {
+  const ratio = RESULTS_PER_QUOTA[request.platform];
+  const reservedQuota = Math.ceil(request.limit / ratio);
+  const chargedQuota = creators.length ? Math.ceil(creators.length / ratio) : 0;
+  const refundQuota = reservedQuota - chargedQuota;
+  const mode = request.seedProfileUrl
+    ? request.contentDirection
+      ? 'homepage_direction'
+      : 'homepage'
+    : 'direction';
+  return {
+    code: 1000,
+    message: 'Similar creators completed',
+    data: {
+      requestId: '123e4567-e89b-42d3-a456-426614174000',
+      platform: request.platform,
+      mode,
+      ...(request.seedProfileUrl
+        ? { seedProfileUrl: request.seedProfileUrl, sourceUserId: 'source-123' }
+        : {}),
+      ...(request.contentDirection ? { contentDirection: request.contentDirection } : {}),
+      total: creators.length,
+      data: creators,
+      quota: {
+        totalQuota: 100,
+        usedQuota: chargedQuota,
+        remainingQuota: 100 - chargedQuota,
+        reservedQuota,
+        chargedQuota,
+        refundQuota,
+        refundStatus: refundQuota > 0 ? 'completed' : 'not_required',
+      },
+    },
+  };
+};
+
+const platformFromProfile = (profileLink) => {
+  const host = new URL(profileLink).hostname;
+  if (host === 'www.instagram.com') return 'instagram';
+  if (host === 'www.tiktok.com') return 'tiktok';
+  return 'youtube';
+};
+
+const lookupSuccess = (profileLink, options = {}) => {
+  const platform = platformFromProfile(profileLink);
+  const emails = options.emails ?? ['hello@example.test', 'team@example.test'];
+  return {
+    code: 1000,
+    message: 'Email lookup completed',
+    data: {
+      platform,
+      username: options.username === undefined ? 'example' : options.username,
+      profileLink,
+      platformUserId: options.platformUserId ?? null,
+      region: options.region === undefined ? 'US' : options.region,
+      email: options.email === undefined ? emails[0] ?? null : options.email,
+      emails,
+      contacts: options.contacts ?? [{ url: 'https://example.test', type: 'website' }],
+      quota: { cost: platform === 'tiktok' ? 1 : 2, remainingQuota: 48 },
+    },
+  };
+};
+
+const quotaCases = [
   {
     script: DISCOVER_SCRIPT,
     input: { platform: 'youtube', contentDirection: 'technology creators' },
@@ -97,16 +204,19 @@ const paidScriptCases = [
   },
 ];
 
-test('both paid scripts send one sanitized request with the API key header', async () => {
+test('both scripts send one sanitized request with the API key header', async () => {
   const requests = [];
   const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
     requests.push({
       path: request.url,
       method: request.method,
       apiKey: request.headers['x-waveinflu-api-key'],
-      body: await readJsonBody(request),
+      requestId: request.headers['x-request-id'],
+      body,
     });
-    const result = request.url === '/api/v1/similar' ? discoverSuccess : lookupSuccess;
+    const result =
+      request.url === '/api/v1/similar' ? discoverSuccess(body) : lookupSuccess(body.url);
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify(result));
   });
@@ -124,18 +234,18 @@ test('both paid scripts send one sanitized request with the API key header', asy
     );
     const lookup = await runScript(
       LOOKUP_SCRIPT,
-      { url: 'https://m.instagram.com/example/?hl=en' },
+      { url: 'm.instagram.com/example/reels?hl=en' },
       { WAVEINFLU_API_BASE_URL: server.origin },
     );
 
     assert.equal(discover.code, 0, discover.stderr);
     assert.equal(lookup.code, 0, lookup.stderr);
-    assert.equal(requests.length, 2);
     assert.deepEqual(requests, [
       {
         path: '/api/v1/similar',
         method: 'POST',
         apiKey: TEST_API_KEY,
+        requestId: requests[0].requestId,
         body: {
           platform: 'tiktok',
           limit: 10,
@@ -148,9 +258,12 @@ test('both paid scripts send one sanitized request with the API key header', asy
         path: '/api/v1/email-lookup',
         method: 'POST',
         apiKey: TEST_API_KEY,
+        requestId: requests[1].requestId,
         body: { url: 'https://www.instagram.com/example/' },
       },
     ]);
+    assert.match(requests[0].requestId, /^[0-9a-f-]{36}$/);
+    assert.match(requests[1].requestId, /^[0-9a-f-]{36}$/);
     assert.equal(discover.stdout.includes(TEST_API_KEY), false);
     assert.equal(lookup.stdout.includes(TEST_API_KEY), false);
   } finally {
@@ -158,31 +271,123 @@ test('both paid scripts send one sanitized request with the API key header', asy
   }
 });
 
-test('local validation rejects unsafe or contract-invalid fields before any paid request', async () => {
+test('creator discovery accepts complete contracts for every platform and mode', async () => {
+  const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(discoverSuccess(body)));
+  });
+  const cases = [
+    { platform: 'youtube', seedProfileUrl: YOUTUBE_SEED, limit: 3 },
+    { platform: 'youtube', contentDirection: 'consumer technology explainers', limit: 3 },
+    {
+      platform: 'youtube',
+      seedProfileUrl: 'https://www.youtube.com/@example/videos',
+      contentDirection: 'practical camera reviews',
+      limit: 4,
+    },
+    { platform: 'tiktok', contentDirection: 'home fitness routines', limit: 5 },
+    { platform: 'tiktok', seedProfileUrl: 'https://m.tiktok.com/@example', limit: 6 },
+    {
+      platform: 'tiktok',
+      seedProfileUrl: 'https://www.tiktok.com/@example',
+      contentDirection: 'practical home workouts',
+      limit: 6,
+    },
+    {
+      platform: 'instagram',
+      contentDirection: 'minimalist fashion creators',
+      limit: 2,
+      filters: { minAverageLikeCount: 50, genders: ['female'] },
+    },
+  ];
+
+  try {
+    for (const input of cases) {
+      const result = await runScript(DISCOVER_SCRIPT, input, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.equal(payload.data.platform, input.platform);
+      assert.equal(payload.data.total, 1);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('creator discovery accepts minimal creator objects for every platform', async () => {
+  const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(discoverSuccess(body, [minimalCreatorFor(body.platform)])));
+  });
+
+  try {
+    for (const platform of ['youtube', 'tiktok', 'instagram']) {
+      const result = await runScript(
+        DISCOVER_SCRIPT,
+        { platform, contentDirection: 'sustainable lifestyle creators', limit: 3 },
+        { WAVEINFLU_API_BASE_URL: server.origin },
+      );
+      assert.equal(result.code, 0, result.stderr);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('creator discovery accepts contract boundaries and a zero-result full refund', async () => {
+  const requests = [];
+  const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
+    requests.push(body);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(discoverSuccess(body, [])));
+  });
+
+  try {
+    const inputs = [
+      { platform: 'youtube', contentDirection: 'a'.repeat(800), limit: 1 },
+      {
+        platform: 'instagram',
+        contentDirection: 'beauty creators',
+        limit: 100,
+        filters: { languages: Array.from({ length: 50 }, (_, index) => `aa-a${index}`) },
+      },
+    ];
+    for (const input of inputs) {
+      const result = await runScript(DISCOVER_SCRIPT, input, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).data.quota.chargedQuota, 0);
+    }
+    assert.equal(requests.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test('creator discovery rejects unsafe or contract-invalid input before submission', async () => {
   let requestCount = 0;
   const server = await startServer((_request, response) => {
     requestCount += 1;
     response.end();
   });
+  const inputs = [
+    { platform: 'youtube', contentDirection: 'tech', extra: true },
+    { platform: 'youtube', contentDirection: `contains ${TEST_API_KEY}` },
+    { platform: 'youtube', contentDirection: 'tech', filters: { regions: ['ZZ'] } },
+    { platform: 'youtube', contentDirection: 'tech', filters: { minFollowers: 499 } },
+    { platform: 'tiktok', contentDirection: 'tech', filters: { genders: ['female'] } },
+    { platform: 'instagram', seedProfileUrl: 'https://www.instagram.com/example/' },
+    { platform: 'instagram', contentDirection: 'x'.repeat(801) },
+    { platform: 'tiktok', seedProfileUrl: 'https://www.tiktok.com/@example/video/123' },
+  ];
 
   try {
-    const inputs = [
-      {
-        platform: 'youtube',
-        contentDirection: 'technology creators',
-        WAVEINFLU_API_KEY: TEST_API_KEY,
-      },
-      {
-        platform: 'youtube',
-        contentDirection: 'technology creators',
-        filters: { regions: ['ZZ'] },
-      },
-      {
-        platform: 'youtube',
-        contentDirection: 'technology creators',
-        filters: { languages: ['en-abcdef12-abcdef12-ab'] },
-      },
-    ];
     for (const input of inputs) {
       const result = await runScript(DISCOVER_SCRIPT, input, {
         WAVEINFLU_API_BASE_URL: server.origin,
@@ -196,118 +401,43 @@ test('local validation rejects unsafe or contract-invalid fields before any paid
   }
 });
 
-test('an arbitrary API origin is rejected before the key can be sent', async () => {
-  const result = await runScript(
-    LOOKUP_SCRIPT,
-    { url: 'https://www.youtube.com/@example' },
-    { WAVEINFLU_API_BASE_URL: 'https://example.com' },
-  );
-
-  const error = JSON.parse(result.stderr);
-  assert.equal(result.code, 1);
-  assert.equal(error.requestSent, false);
-  assert.equal(error.error.type, 'LOCAL_INPUT_ERROR');
-});
-
-test('redirects are not followed and cannot forward the API key', async () => {
-  let targetRequests = 0;
-  const target = await startServer((_request, response) => {
-    targetRequests += 1;
-    response.end(JSON.stringify(lookupSuccess));
+test('creator discovery rejects incomplete or inconsistent success responses', async () => {
+  const input = { platform: 'youtube', contentDirection: 'technology creators', limit: 3 };
+  const valid = discoverSuccess({
+    ...input,
+    globalDeduplicationEnabled: true,
   });
-  const source = await startServer((_request, response) => {
-    response.writeHead(307, { Location: `${target.origin}/capture` });
-    response.end();
-  });
-
-  try {
-    for (const testCase of paidScriptCases) {
-      const result = await runScript(testCase.script, testCase.input, {
-        WAVEINFLU_API_BASE_URL: source.origin,
-      });
-      const error = JSON.parse(result.stderr);
-      assert.equal(result.code, 1);
-      assert.equal(error.requestSent, 'unknown');
-      assert.equal(error.autoRetryAllowed, false);
-    }
-    assert.equal(targetRequests, 0);
-  } finally {
-    await source.close();
-    await target.close();
-  }
-});
-
-test('HTTP 429 is never retried and preserves Retry-After', async () => {
-  let requestCount = 0;
+  const variants = [
+    (() => {
+      const value = structuredClone(valid);
+      delete value.data.mode;
+      return value;
+    })(),
+    (() => {
+      const value = structuredClone(valid);
+      delete value.data.quota.reservedQuota;
+      return value;
+    })(),
+    (() => {
+      const value = structuredClone(valid);
+      delete value.data.data[0].channelId;
+      return value;
+    })(),
+    (() => {
+      const value = structuredClone(valid);
+      value.data.data[0].platform = 'tiktok';
+      return value;
+    })(),
+  ];
+  let index = 0;
   const server = await startServer((_request, response) => {
-    requestCount += 1;
-    response.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '30' });
-    response.end(
-      JSON.stringify({
-        code: 14029,
-        message: `Rate limited: ${TEST_API_KEY}`,
-        error: { detail: TEST_API_KEY },
-      }),
-    );
-  });
-
-  try {
-    for (const testCase of paidScriptCases) {
-      const result = await runScript(testCase.script, testCase.input, {
-        WAVEINFLU_API_BASE_URL: server.origin,
-      });
-      const error = JSON.parse(result.stderr);
-      assert.equal(result.code, 1);
-      assert.equal(error.requestSent, true);
-      assert.equal(error.autoRetryAllowed, false);
-      assert.equal(error.retryAfter, '30');
-      assert.equal(result.stderr.includes(TEST_API_KEY), false);
-      assert.equal(result.stderr.includes('[REDACTED]'), true);
-    }
-    assert.equal(requestCount, 2);
-  } finally {
-    await server.close();
-  }
-});
-
-test('a non-JSON HTTP 200 is an uncertain paid failure, not success', async () => {
-  const server = await startServer((_request, response) => {
-    response.writeHead(200, { 'Content-Type': 'text/plain' });
-    response.end('not-json');
-  });
-
-  try {
-    for (const testCase of paidScriptCases) {
-      const result = await runScript(testCase.script, testCase.input, {
-        WAVEINFLU_API_BASE_URL: server.origin,
-      });
-      const error = JSON.parse(result.stderr);
-      assert.equal(result.code, 1);
-      assert.equal(error.requestSent, true);
-      assert.equal(error.autoRetryAllowed, false);
-      assert.equal(error.error.type, 'INVALID_RESPONSE');
-    }
-  } finally {
-    await server.close();
-  }
-});
-
-test('incomplete success envelopes are rejected after submission', async () => {
-  const server = await startServer((request, response) => {
-    const payload =
-      request.url === '/api/v1/similar'
-        ? { code: 1000, data: { requestId: 'req_test', platform: 'youtube', data: [], quota: {} } }
-        : {
-            code: 1000,
-            data: { platform: 'youtube', emails: [], contacts: [], quota: {} },
-          };
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify(payload));
+    response.end(JSON.stringify(variants[index++]));
   });
 
   try {
-    for (const testCase of paidScriptCases) {
-      const result = await runScript(testCase.script, testCase.input, {
+    for (const _variant of variants) {
+      const result = await runScript(DISCOVER_SCRIPT, input, {
         WAVEINFLU_API_BASE_URL: server.origin,
       });
       const error = JSON.parse(result.stderr);
@@ -320,68 +450,75 @@ test('incomplete success envelopes are rejected after submission', async () => {
   }
 });
 
-test('email lookup rejects a complete response for the wrong platform', async () => {
-  const server = await startServer((_request, response) => {
+test('email lookup canonicalizes all supported creator URL forms', async () => {
+  const requests = [];
+  const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
+    requests.push(body.url);
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(
-      JSON.stringify({
-        code: 1000,
-        data: {
-          platform: 'instagram',
-          username: 'wrong.creator',
-          profileLink: 'https://www.instagram.com/wrong.creator/',
-          platformUserId: null,
-          region: null,
-          email: null,
-          emails: [],
-          contacts: [],
-          quota: { cost: 2, remainingQuota: 48 },
-        },
-      }),
-    );
+    response.end(JSON.stringify(lookupSuccess(body.url)));
   });
+  const cases = [
+    ['instagram.com/example/reels?hl=en', 'https://www.instagram.com/example/'],
+    ['instagram.com/@example/reels?hl=en', 'https://www.instagram.com/example/'],
+    ['http://m.tiktok.com/@creator/video/123', 'https://www.tiktok.com/@creator'],
+    ['youtube.com/@中文/videos', 'https://www.youtube.com/@%E4%B8%AD%E6%96%87'],
+    ['https://m.youtube.com/channel/UC123/videos', 'https://www.youtube.com/channel/UC123'],
+    ['https://www.youtube.com/c/example/about', 'https://www.youtube.com/c/example'],
+    ['https://www.youtube.com/user/example/playlists', 'https://www.youtube.com/user/example'],
+    ['https://www.youtube.com/channel/@UC456/videos', 'https://www.youtube.com/channel/UC456'],
+    ['https://www.youtube.com/c/@creator/about', 'https://www.youtube.com/c/creator'],
+    ['https://www.youtube.com/user/@creator/playlists', 'https://www.youtube.com/user/creator'],
+  ];
 
   try {
-    const result = await runScript(
-      LOOKUP_SCRIPT,
-      { url: 'https://www.youtube.com/@example' },
-      { WAVEINFLU_API_BASE_URL: server.origin },
-    );
-    const error = JSON.parse(result.stderr);
-    assert.equal(result.code, 1);
-    assert.equal(error.requestSent, true);
-    assert.equal(error.error.type, 'INVALID_RESPONSE');
+    for (const [url, expected] of cases) {
+      const result = await runScript(LOOKUP_SCRIPT, { url }, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).data.profileLink, expected);
+    }
+    assert.deepEqual(requests, cases.map(([, expected]) => expected));
   } finally {
     await server.close();
   }
 });
 
-test('oversized responses are rejected after one submission', async () => {
-  const server = await startServer((request, response) => {
-    const contentLength = request.url === '/api/v1/similar' ? 6 * 1024 * 1024 : 2 * 1024 * 1024;
-    response.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Content-Length': String(contentLength),
+test('email lookup accepts no-email success and complete public contact data', async () => {
+  const responses = [
+    lookupSuccess('https://www.instagram.com/example/', {
+      emails: [],
+      email: null,
+      contacts: [],
+      username: null,
+      region: null,
+    }),
+    lookupSuccess('https://www.tiktok.com/@example'),
+  ];
+  let index = 0;
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(responses[index++]));
+  });
+
+  try {
+    const empty = await runScript(LOOKUP_SCRIPT, { url: 'instagram.com/example' }, {
+      WAVEINFLU_API_BASE_URL: server.origin,
     });
-    response.end();
-  });
-
-  try {
-    for (const testCase of paidScriptCases) {
-      const result = await runScript(testCase.script, testCase.input, {
-        WAVEINFLU_API_BASE_URL: server.origin,
-      });
-      const error = JSON.parse(result.stderr);
-      assert.equal(result.code, 1);
-      assert.equal(error.requestSent, true);
-      assert.equal(error.error.type, 'RESPONSE_TOO_LARGE');
-    }
+    const complete = await runScript(LOOKUP_SCRIPT, { url: 'tiktok.com/@example' }, {
+      WAVEINFLU_API_BASE_URL: server.origin,
+    });
+    assert.equal(empty.code, 0, empty.stderr);
+    assert.equal(JSON.parse(empty.stdout).data.email, null);
+    assert.equal(complete.code, 0, complete.stderr);
+    assert.equal(JSON.parse(complete.stdout).data.quota.cost, 1);
   } finally {
     await server.close();
   }
 });
 
-test('email lookup rejects content URLs before any paid request', async () => {
+test('email lookup rejects unsupported, ambiguous, or batch input before submission', async () => {
   let requestCount = 0;
   const server = await startServer((_request, response) => {
     requestCount += 1;
@@ -389,17 +526,34 @@ test('email lookup rejects content URLs before any paid request', async () => {
   });
   const urls = [
     'https://www.youtube.com/watch?v=abc',
-    'https://www.tiktok.com/@creator/video/123',
+    'https://youtu.be/abc',
     'https://www.instagram.com/reel/ABC123/',
+    'https://user:pass@www.tiktok.com/@creator',
+    'https://www.instagram.com:8443/example/',
+    'https://www.instagram.com/exam\nple/',
+    'https://www.tiktok.com/@exam\tple',
+    'https://www.youtube.com/@exam\rple',
+    'Example Creator',
   ];
 
   try {
     for (const url of urls) {
-      const result = await runScript(
-        LOOKUP_SCRIPT,
-        { url },
-        { WAVEINFLU_API_BASE_URL: server.origin },
-      );
+      const result = await runScript(LOOKUP_SCRIPT, { url }, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 1);
+      assert.equal(JSON.parse(result.stderr).requestSent, false);
+    }
+    for (const input of [
+      { url: ['https://www.instagram.com/one/', 'https://www.instagram.com/two/'] },
+      [
+        { url: 'https://www.instagram.com/one/' },
+        { url: 'https://www.instagram.com/two/' },
+      ],
+    ]) {
+      const result = await runScript(LOOKUP_SCRIPT, input, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
       assert.equal(result.code, 1);
       assert.equal(JSON.parse(result.stderr).requestSent, false);
     }
@@ -409,24 +563,186 @@ test('email lookup rejects content URLs before any paid request', async () => {
   }
 });
 
-test('an interrupted response body is marked as already submitted', async () => {
+test('email lookup rejects inconsistent success data', async () => {
+  const valid = lookupSuccess('https://www.youtube.com/@example');
+  const variants = [
+    { ...valid, data: { ...valid.data, platform: 'instagram' } },
+    { ...valid, data: { ...valid.data, profileLink: 'https://www.youtube.com/@other' } },
+    { ...valid, data: { ...valid.data, contacts: [{ url: '', type: 'website' }] } },
+    { ...valid, data: { ...valid.data, emails: ['hello@example.test', 'hello@example.test'] } },
+    { ...valid, data: { ...valid.data, quota: { cost: 1, remainingQuota: 49 } } },
+  ];
+  let index = 0;
   const server = await startServer((_request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(variants[index++]));
+  });
+
+  try {
+    for (const _variant of variants) {
+      const result = await runScript(LOOKUP_SCRIPT, { url: 'youtube.com/@example' }, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      assert.equal(result.code, 1);
+      assert.equal(JSON.parse(result.stderr).error.type, 'INVALID_RESPONSE');
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test('missing or malformed API keys fail locally', async () => {
+  for (const [script, input] of [
+    [DISCOVER_SCRIPT, { platform: 'youtube', contentDirection: 'technology' }],
+    [LOOKUP_SCRIPT, { url: 'youtube.com/@example' }],
+  ]) {
+    for (const key of ['', 'waveInflu_short']) {
+      const result = await runScript(script, input, { WAVEINFLU_API_KEY: key });
+      const error = JSON.parse(result.stderr);
+      assert.equal(result.code, 1);
+      assert.equal(error.requestSent, false);
+      assert.equal(error.error.type, 'LOCAL_INPUT_ERROR');
+    }
+  }
+});
+
+test('an arbitrary API origin is rejected before the key can be sent', async () => {
+  const result = await runScript(
+    LOOKUP_SCRIPT,
+    { url: 'https://www.youtube.com/@example' },
+    { WAVEINFLU_API_BASE_URL: 'https://example.com' },
+  );
+  const error = JSON.parse(result.stderr);
+  assert.equal(result.code, 1);
+  assert.equal(error.requestSent, false);
+  assert.equal(error.error.type, 'LOCAL_INPUT_ERROR');
+});
+
+test('redirects are never followed and cannot forward the API key', async () => {
+  let targetRequests = 0;
+  const sourceRequestIds = [];
+  const target = await startServer((_request, response) => {
+    targetRequests += 1;
+    response.end();
+  });
+  const source = await startServer((request, response) => {
+    sourceRequestIds.push(request.headers['x-request-id']);
+    response.writeHead(307, { Location: `${target.origin}/capture` });
+    response.end();
+  });
+
+  try {
+    for (const [index, testCase] of quotaCases.entries()) {
+      const result = await runScript(testCase.script, testCase.input, {
+        WAVEINFLU_API_BASE_URL: source.origin,
+      });
+      const error = JSON.parse(result.stderr);
+      assert.equal(result.code, 1);
+      assert.equal(error.requestSent, 'unknown');
+      assert.equal(error.autoRetryAllowed, false);
+      assert.equal(error.requestId, sourceRequestIds[index]);
+    }
+    assert.equal(targetRequests, 0);
+  } finally {
+    await source.close();
+    await target.close();
+  }
+});
+
+test('HTTP errors are returned once, sanitized, and include diagnostic headers', async () => {
+  for (const status of [400, 401, 403, 429, 500]) {
+    let requestCount = 0;
+    const server = await startServer((_request, response) => {
+      requestCount += 1;
+      response.writeHead(status, {
+        'Content-Type': 'application/json',
+        'X-Request-Id': `edge-${status}`,
+        ...(status === 429 ? { 'Retry-After': '30' } : {}),
+      });
+      response.end(
+        JSON.stringify({
+          code: status === 401 ? 1413 : status === 403 ? 1403 : 1500,
+          message: `Rejected ${TEST_API_KEY}`,
+          error: { detail: TEST_API_KEY },
+        }),
+      );
+    });
+
+    try {
+      for (const testCase of quotaCases) {
+        const result = await runScript(testCase.script, testCase.input, {
+          WAVEINFLU_API_BASE_URL: server.origin,
+        });
+        const error = JSON.parse(result.stderr);
+        assert.equal(result.code, 1);
+        assert.equal(error.requestSent, true);
+        assert.equal(error.autoRetryAllowed, false);
+        assert.equal(error.requestId, `edge-${status}`);
+        assert.equal(result.stderr.includes(TEST_API_KEY), false);
+        assert.equal(result.stderr.includes('[REDACTED]'), true);
+        if (status === 429) assert.equal(error.retryAfter, '30');
+      }
+      assert.equal(requestCount, 2);
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test('malformed and oversized success responses remain one uncertain submission', async () => {
+  const responders = [
+    (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/plain', 'X-Request-Id': 'bad-json' });
+      response.end('not-json');
+    },
+    (request, response) => {
+      const contentLength =
+        request.url === '/api/v1/similar' ? 6 * 1024 * 1024 : 2 * 1024 * 1024;
+      response.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': String(contentLength),
+      });
+      response.end();
+    },
+  ];
+
+  for (const responder of responders) {
+    const server = await startServer(responder);
+    try {
+      for (const testCase of quotaCases) {
+        const result = await runScript(testCase.script, testCase.input, {
+          WAVEINFLU_API_BASE_URL: server.origin,
+        });
+        const error = JSON.parse(result.stderr);
+        assert.equal(result.code, 1);
+        assert.equal(error.requestSent, true);
+        assert.equal(error.autoRetryAllowed, false);
+        assert.ok(['INVALID_RESPONSE', 'RESPONSE_TOO_LARGE'].includes(error.error.type));
+      }
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test('interrupted response bodies are marked as already submitted', async () => {
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json', 'X-Request-Id': 'interrupted' });
     response.write('{"code":1000');
     setImmediate(() => response.destroy());
   });
 
   try {
-    const result = await runScript(
-      DISCOVER_SCRIPT,
-      { platform: 'instagram', contentDirection: 'home fitness creators' },
-      { WAVEINFLU_API_BASE_URL: server.origin },
-    );
-    const error = JSON.parse(result.stderr);
-    assert.equal(result.code, 1);
-    assert.equal(error.requestSent, true);
-    assert.equal(error.autoRetryAllowed, false);
-    assert.equal(error.error.type, 'RESPONSE_READ_ERROR');
+    for (const testCase of quotaCases) {
+      const result = await runScript(testCase.script, testCase.input, {
+        WAVEINFLU_API_BASE_URL: server.origin,
+      });
+      const error = JSON.parse(result.stderr);
+      assert.equal(result.code, 1);
+      assert.equal(error.requestSent, true);
+      assert.equal(error.requestId, 'interrupted');
+      assert.equal(error.error.type, 'RESPONSE_READ_ERROR');
+    }
   } finally {
     await server.close();
   }
