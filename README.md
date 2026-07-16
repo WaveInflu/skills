@@ -56,6 +56,8 @@ Find public contact emails for these creator profiles: https://www.youtube.com/@
 
 You can also omit the `$skill-name` prefix and ask in natural language when your Agent can match installed Skills. Discovery accepts a profile, a campaign brief, or both for YouTube and TikTok; Instagram discovery uses a campaign brief. Email lookup accepts 1–50 supported creator URLs.
 
+Normal Agent runs use compact structured results so large creator lists stay readable and do not overflow tool output. Complete API fields remain available when a user explicitly requests detailed profiles or an export.
+
 ## Quota behavior
 
 Main quota and email quota are separate balances.

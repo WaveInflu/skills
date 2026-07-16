@@ -10,7 +10,7 @@ const API_PATH = '/api/v1/email-lookup';
 const MAX_INPUT_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
-const CLIENT_VERSION = '0.4.0';
+const CLIENT_VERSION = '0.5.0';
 const RESERVED_INSTAGRAM_PATHS = new Set([
   'p',
   'reel',

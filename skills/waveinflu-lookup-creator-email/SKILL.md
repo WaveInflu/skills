@@ -10,7 +10,7 @@ Use the bundled Node.js scripts for every concrete lookup. Answer setup, contrac
 ## Run one bounded batch
 
 1. Obtain 1–50 supported URLs, each identifying one creator account. Ask for URLs when the user provides only names or handles; never guess accounts.
-2. Read [references/api-contract.md](references/api-contract.md) before normalizing URLs or interpreting contact, quota, and error fields.
+2. Use this core workflow directly for canonical Instagram, TikTok, or YouTube profile URLs. Read [references/api-contract.md](references/api-contract.md) only for ambiguous URL forms, complete response semantics, or API or validation errors.
 3. Estimate the upper-bound email quota from the supplied URLs: TikTok costs 1; Instagram and YouTube cost 2. Use that amount as `maxQuotaCost` unless the user explicitly sets a lower cap. State the count and cap before submitting.
 4. Resolve `SKILL_DIR` to the absolute directory containing this file, then invoke the batch script. Use the same path for a single URL:
 
@@ -21,12 +21,14 @@ node "$SKILL_DIR/scripts/lookup-batch.mjs" <<'JSON'
     "https://www.instagram.com/example/",
     "https://www.tiktok.com/@example"
   ],
-  "maxQuotaCost": 3
+  "maxQuotaCost": 3,
+  "outputFormat": "compact"
 }
 JSON
 ```
 
-5. Report each normalized profile, primary email, deduplicated email list, and contact links. Report `data.chargedQuota`, `remainingQuota`, duplicate count, and any profiles that were not started. Clearly say when no public email was found.
+5. Use `outputFormat: "compact"` for normal lists and tables. Use `"full"` only when the user explicitly needs platform IDs and complete per-profile API responses.
+6. Report each normalized profile, primary email, deduplicated email list, and contact links. Report `data.chargedQuota`, `remainingQuota`, duplicate count, and any profiles that were not started. Clearly say when no public email was found.
 
 ## Enforce the quota-charging boundary
 

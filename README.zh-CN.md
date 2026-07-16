@@ -56,6 +56,8 @@ $waveinflu-lookup-creator-email
 
 如果 Agent 能匹配已安装的 Skill，也可以省略 `$skill-name`，直接用自然语言提问。YouTube 和 TikTok 发现支持达人主页、活动描述或两者组合；Instagram 发现使用活动描述。邮箱查询支持一次提交 1–50 个达人主页 URL。
 
+Agent 日常调用默认返回紧凑的结构化结果，避免大批量名单撑爆工具输出；只有在用户明确要求完整画像或导出时，才返回全部 API 字段。
+
 ## 额度规则
 
 主额度和邮箱额度是两个独立账户。

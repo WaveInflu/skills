@@ -10,7 +10,7 @@ const API_PATH = '/api/v1/similar';
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 180_000;
-const CLIENT_VERSION = '0.4.0';
+const CLIENT_VERSION = '0.5.0';
 const TOP_LEVEL_KEYS = new Set([
   'platform',
   'seedProfileUrl',

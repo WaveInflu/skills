@@ -9,7 +9,7 @@ Use the bundled Node.js script for every concrete discovery execution. Answer se
 
 ## Run bounded discovery
 
-1. Read [references/api-contract.md](references/api-contract.md) before selecting a mode, filter, or interpreting quota and errors.
+1. Use this core workflow directly for a standard natural-language discovery. Read [references/api-contract.md](references/api-contract.md) only when applying seed or advanced filter details, explaining complete response fields, or handling an API or validation error.
 2. Extract one platform, the seed or campaign brief, the requested result count, and explicit hard filters. Infer a platform only from an unambiguous supported URL; otherwise ask.
 3. Use `contentDirection`, `seedProfileUrl`, or both for YouTube/TikTok. Use only `contentDirection` for Instagram.
 4. Use `limit: 25` when no count is given. If the user requests fewer than 1 or more than 100, ask for a valid count; never clamp or increase it silently. Leave viewed-history deduplication enabled unless the user explicitly asks to include previously viewed creators.
@@ -24,6 +24,7 @@ node "$SKILL_DIR/scripts/discover-bounded.mjs" <<'JSON'
   "contentDirection": "US skincare creators making practical product reviews",
   "limit": 20,
   "maxQuotaCost": 6,
+  "outputFormat": "compact",
   "filters": {
     "regions": ["US"],
     "languages": ["en"]
@@ -32,13 +33,15 @@ node "$SKILL_DIR/scripts/discover-bounded.mjs" <<'JSON'
 JSON
 ```
 
-7. Summarize the creators against the user's criteria. Report `data.total`, `complete`, `continuation.stopReason`, `quota.chargedQuota`, `refundQuota`, and `remainingQuota` from the response, not a local estimate.
+7. Use `outputFormat: "compact"` for normal lists and tables. Use `"full"` only when the user explicitly needs complete creator profiles for detailed analysis or export.
+8. Summarize the creators against the user's criteria. Report `data.total`, `complete`, `continuation.stopReason`, `quota.chargedQuota`, `refundQuota`, and `remainingQuota` from the response, not a local estimate.
 
 ## Enforce the quota-charging boundary
 
 - Let the bundled script load the Key from WaveInflu's user-level credentials. `WAVEINFLU_API_KEY` may override it for CI or automation. Never request a Key in chat, print it, place it in JSON, or write it to a project file.
 - The bounded script may make at most three atomic POSTs, sequentially, only when the previous POST returned a validated success and the target is still incomplete. Every atomic `discover.mjs` process still sends exactly one POST and never retries.
 - A continuation is not a retry: preserve the platform, seed, brief, filters, and viewed-history setting; request only the remaining target; deduplicate accumulated results by platform identity; stop when a call adds no new creators.
+- Rank all accumulated unique creators globally by `similarityScore`; do not keep a weaker first-call result ahead of a stronger continuation result.
 - Never exceed `maxQuotaCost`. Never broaden filters, switch platforms, disable viewed-history deduplication, or submit URL variants automatically.
 - Treat a timeout, network failure, unreadable response, or invalid success body as an unknown quota outcome. Stop immediately and do not send the next continuation.
 - If the bounded script reports `requestSent: false`, correct the local payload and rerun it; no POST occurred. For `requestSent: true` or `"unknown"`, do not rerun without a new explicit user instruction.

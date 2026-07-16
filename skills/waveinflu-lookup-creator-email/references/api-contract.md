@@ -6,6 +6,7 @@
 - [Request](#request)
 - [Supported URLs](#supported-urls)
 - [Bundled-script boundary](#bundled-script-boundary)
+- [Output formats](#output-formats)
 - [Response](#response)
 - [Public-data and nullable semantics](#public-data-and-nullable-semantics)
 - [Quota and charging](#quota-and-charging)
@@ -47,11 +48,12 @@ The Skill entry point `lookup-batch.mjs` accepts:
     "https://www.instagram.com/example/",
     "https://www.tiktok.com/@example"
   ],
-  "maxQuotaCost": 3
+  "maxQuotaCost": 3,
+  "outputFormat": "compact"
 }
 ```
 
-`urls` must contain 1–50 profile URLs. `maxQuotaCost` is a required positive integer enforced locally and never sent to the API.
+`urls` must contain 1–50 profile URLs. `maxQuotaCost` is a required positive integer enforced locally and never sent to the API. `outputFormat` is an optional local `compact | full` field and is also never sent.
 
 ## Supported URLs
 
@@ -89,6 +91,13 @@ The batch script adds a bounded orchestration layer:
 - Stop before the next wave if any current lookup fails or has an unknown quota outcome. Already-running requests are not aborted because aborting creates additional unknown outcomes.
 
 With concurrency 3, a failed profile can have up to two later profiles already in flight in the same wave. No profile from a later wave is sent.
+
+## Output formats
+
+- `compact`: returns bounded identity fields, canonical profile URL, region, primary email, up to 10 deduplicated emails, up to 5 contact links, total email/contact counts, and per-profile quota cost. Use it for normal Agent output.
+- `full`: returns complete validated API data for every profile, including platform user ID and the original quota object. This remains the direct-script default.
+
+The Skill explicitly requests `compact` unless the user asks for complete profile records or export data.
 
 If the script cannot safely identify one creator from the URL, ask the user for that creator's profile URL. Do not bypass the script or guess from a content ID.
 

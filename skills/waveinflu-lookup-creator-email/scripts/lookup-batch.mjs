@@ -10,6 +10,7 @@ const MAX_INPUT_BYTES = 128 * 1024;
 const MAX_CHILD_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_URLS = 50;
 const CONCURRENCY = 3;
+const OUTPUT_FORMATS = new Set(['compact', 'full']);
 const ATOMIC_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), 'lookup.mjs');
 
 class InputError extends Error {}
@@ -102,18 +103,44 @@ const runAtomic = (url) =>
 
 const quotaCost = (url) => platformFromProfileUrl(url) === 'tiktok' ? 1 : 2;
 
+const compactResult = (result) => {
+  const emails = result.emails.slice(0, 10).map((email) => email.slice(0, 320));
+  const contacts = result.contacts
+    .filter((contact) => contact.url.length <= 512)
+    .slice(0, 5)
+    .map((contact) => ({ url: contact.url, type: contact.type.slice(0, 80) }));
+  return {
+    platform: result.platform,
+    username: result.username?.slice(0, 100) ?? null,
+    profileLink: result.profileLink.slice(0, 2_048),
+    region: result.region?.slice(0, 20) ?? null,
+    email: result.email?.slice(0, 320) ?? null,
+    emails,
+    emailCount: result.emails.length,
+    contacts,
+    contactCount: result.contacts.length,
+    quotaCost: result.quota.cost,
+  };
+};
+
 const main = async () => {
   const input = await readInput();
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new InputError('Input must be a JSON object.');
   }
-  const unknown = Object.keys(input).filter((key) => !['urls', 'maxQuotaCost'].includes(key));
+  const unknown = Object.keys(input).filter(
+    (key) => !['urls', 'maxQuotaCost', 'outputFormat'].includes(key),
+  );
   if (unknown.length) throw new InputError(`Request contains unsupported field: ${unknown[0]}.`);
   if (!Array.isArray(input.urls) || input.urls.length < 1 || input.urls.length > MAX_URLS) {
     throw new InputError(`urls must contain between 1 and ${MAX_URLS} creator profile URLs.`);
   }
   if (!Number.isInteger(input.maxQuotaCost) || input.maxQuotaCost < 1) {
     throw new InputError('maxQuotaCost must be a positive integer.');
+  }
+  const outputFormat = input.outputFormat ?? 'full';
+  if (!OUTPUT_FORMATS.has(outputFormat)) {
+    throw new InputError('outputFormat must be compact or full.');
   }
 
   let canonicalUrls;
@@ -142,7 +169,7 @@ const main = async () => {
 
     for (const { url, result } of outcomes) {
       if (!result.ok) continue;
-      results.push(result.response.data);
+      results.push(outputFormat === 'compact' ? compactResult(result.response.data) : result.response.data);
       knownChargedQuota += result.response.data.quota.cost;
       lowestRemainingQuota = lowestRemainingQuota === undefined
         ? result.response.data.quota.remainingQuota
@@ -188,6 +215,7 @@ const main = async () => {
       duplicateCount: input.urls.length - urls.length,
       concurrency: CONCURRENCY,
       maxQuotaCost: input.maxQuotaCost,
+      outputFormat,
       plannedQuotaCost,
       chargedQuota: knownChargedQuota,
       remainingQuota: lowestRemainingQuota,

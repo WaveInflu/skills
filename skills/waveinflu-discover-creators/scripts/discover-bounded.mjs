@@ -10,6 +10,7 @@ const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_CHILD_OUTPUT_BYTES = 6 * 1024 * 1024;
 const MAX_CALLS = 3;
 const RESULTS_PER_QUOTA = { youtube: 3, tiktok: 5, instagram: 2 };
+const OUTPUT_FORMATS = new Set(['compact', 'full']);
 const ATOMIC_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), 'discover.mjs');
 
 class InputError extends Error {}
@@ -109,15 +110,58 @@ const runAtomic = (payload) =>
 const creatorKey = (creator, platform) =>
   platform === 'youtube' ? `youtube:${creator.channelId}` : `${platform}:${creator.userId}`;
 
+const compactStringList = (value) => Array.isArray(value)
+  ? value
+    .filter((item) => typeof item === 'string' && item.trim())
+    .slice(0, 4)
+    .map((item) => item.trim().slice(0, 60))
+  : [];
+
+const compactCreator = (creator) => {
+  const contentVerticals = compactStringList(creator.contentVerticals);
+  const contentFormats = compactStringList(creator.contentFormats);
+  const displayName = [creator.fullName, creator.channelTitle, creator.nickname, creator.username]
+    .find((value) => typeof value === 'string' && value.trim());
+  return {
+    username: creator.username.slice(0, 100),
+    platform: creator.platform,
+    platformHandle: creator.platformHandle.slice(0, 120),
+    displayName: displayName.trim().slice(0, 120),
+    profileUrl: creator.profileUrl.slice(0, 2_048),
+    similarityScore: creator.similarityScore,
+    ...(Number.isFinite(creator.followerCount) ? { followerCount: creator.followerCount } : {}),
+    ...(Number.isFinite(creator.averagePlayCount) ? { averagePlayCount: creator.averagePlayCount } : {}),
+    ...(Number.isFinite(creator.averageLikeCount) ? { averageLikeCount: creator.averageLikeCount } : {}),
+    ...(typeof creator.region === 'string' && creator.region ? { region: creator.region } : {}),
+    ...(typeof creator.language === 'string' && creator.language ? { language: creator.language } : {}),
+    ...(creator.email ? { email: creator.email.slice(0, 320) } : {}),
+    ...(creator.description ? { contentSummary: creator.description.slice(0, 180) } : {}),
+    ...(typeof creator.gender === 'string' && creator.gender ? { gender: creator.gender } : {}),
+    ...(typeof creator.ethnicity === 'string' && creator.ethnicity ? { ethnicity: creator.ethnicity } : {}),
+    ...(typeof creator.creatorType === 'string' && creator.creatorType ? { creatorType: creator.creatorType } : {}),
+    ...(contentVerticals.length ? { contentVerticals } : {}),
+    ...(contentFormats.length ? { contentFormats } : {}),
+  };
+};
+
+const rankCreators = (creators) => [...creators]
+  .sort((left, right) => right.similarityScore - left.similarityScore);
+
+const formatCreators = (creators, outputFormat) => rankCreators(creators)
+  .map((creator) => outputFormat === 'compact' ? compactCreator(creator) : creator);
+
 const main = async () => {
   const input = await readInput();
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new InputError('Input must be a JSON object.');
   }
 
-  const { maxQuotaCost, ...atomicInput } = input;
+  const { maxQuotaCost, outputFormat = 'full', ...atomicInput } = input;
   if (!Number.isInteger(maxQuotaCost) || maxQuotaCost < 1) {
     throw new InputError('maxQuotaCost must be a positive integer.');
+  }
+  if (!OUTPUT_FORMATS.has(outputFormat)) {
+    throw new InputError('outputFormat must be compact or full.');
   }
 
   let baseRequest;
@@ -179,7 +223,7 @@ const main = async () => {
           chargedQuota: cumulativeChargedQuota,
           stopReason: 'unknown_quota_outcome',
         },
-        partialData: [...creators.values()],
+        partialData: formatCreators(creators.values(), outputFormat),
       });
       return;
     }
@@ -196,7 +240,7 @@ const main = async () => {
           type: 'QUOTA_CONTRACT_VIOLATION',
           message: 'WaveInflu returned quota usage outside the local spend boundary. No further request was sent.',
         },
-        partialData: [...creators.values()],
+        partialData: formatCreators(creators.values(), outputFormat),
       });
       return;
     }
@@ -204,9 +248,12 @@ const main = async () => {
     let newUnique = 0;
     for (const creator of response.data.data) {
       const key = creatorKey(creator, baseRequest.platform);
-      if (!creators.has(key)) {
+      const existing = creators.get(key);
+      if (!existing) {
         creators.set(key, creator);
         newUnique += 1;
+      } else if (creator.similarityScore > existing.similarityScore) {
+        creators.set(key, creator);
       }
     }
 
@@ -236,7 +283,10 @@ const main = async () => {
     }
   }
 
-  const finalCreators = [...creators.values()].slice(0, targetCount);
+  const finalCreators = rankCreators(creators.values()).slice(0, targetCount);
+  const outputCreators = outputFormat === 'compact'
+    ? finalCreators.map(compactCreator)
+    : finalCreators;
   const lastData = lastResponse.data;
   process.stdout.write(`${JSON.stringify({
     code: 1000,
@@ -250,7 +300,8 @@ const main = async () => {
       targetCount,
       total: finalCreators.length,
       complete: finalCreators.length >= targetCount,
-      data: finalCreators,
+      outputFormat,
+      data: outputCreators,
       continuation: {
         calls,
         maxCalls: MAX_CALLS,

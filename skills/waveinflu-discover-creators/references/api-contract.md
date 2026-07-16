@@ -6,6 +6,7 @@
 - [Bundled-script boundary](#bundled-script-boundary)
 - [Bounded continuation](#bounded-continuation)
 - [Request](#request)
+- [Output formats](#output-formats)
 - [Modes and seed URLs](#modes-and-seed-urls)
 - [Filters and retrieval rules](#filters-and-retrieval-rules)
 - [Deduplication and ranking](#deduplication-and-ranking)
@@ -53,7 +54,7 @@ The bounded script accepts the normal discovery request plus a required local `m
 - Maximum three sequential POSTs for one user instruction.
 - The first POST uses the requested `limit`. A later POST is allowed only after a validated successful response and requests at most the remaining unique target.
 - Each later request preserves platform, seed, brief, filters, and `globalDeduplicationEnabled` exactly.
-- Results are accumulated and deduplicated across calls by `channelId` for YouTube or `userId` for TikTok/Instagram.
+- Results are accumulated and deduplicated across calls by `channelId` for YouTube or `userId` for TikTok/Instagram. A higher-scoring duplicate replaces the older copy, and final unique results are globally sorted by descending `similarityScore`.
 - Stop on target reached, three calls, local quota cap, zero new unique creators, or any failed/unknown response.
 - A timeout, network failure, unreadable body, invalid response, redirect, or HTTP error never triggers another call.
 
@@ -71,6 +72,15 @@ This distinction is fundamental: a continuation starts only after the previous r
 | `filters` | object | Optional strict object; supported keys are listed below. |
 
 `discover-bounded.mjs` also requires `maxQuotaCost`. It must cover the initial reservation, `ceil(limit / platform ratio)`. The recommended default is that initial reservation plus 2 credits, which permits the rounding overhead of splitting a successful target across at most three calls without allowing duplicate-heavy continuation to run freely.
+
+## Output formats
+
+`discover-bounded.mjs` accepts a local `outputFormat` field that is never sent to the API:
+
+- `compact`: intended for normal Agent lists and tables. Returns bounded identity fields, profile URL, score, available audience and engagement metrics, region, language, public email, a 180-character content summary, and up to four values for each available Instagram content category.
+- `full`: returns every validated creator field from the API. This remains the script default for direct callers; the Skill explicitly requests `compact` unless the user needs detailed profiles or export data.
+
+Both formats use the same ranking, deduplication, quota accounting, and continuation rules.
 
 For `contentDirection`, preserve the user's campaign intent as prose. Do not add inferred demographic requirements or silently broaden the brief.
 
@@ -228,6 +238,7 @@ Success uses the standard envelope:
 |---|---|
 | `data.targetCount` | Original requested result count. |
 | `data.complete` | Whether unique results reached the target. |
+| `data.outputFormat` | `compact` or `full`. |
 | `data.continuation.calls` | Per-call request ID, requested limit, returned count, new unique count, and charged quota. |
 | `data.continuation.maxCalls` | Fixed at 3. |
 | `data.continuation.maxQuotaCost` | Local total spend cap. |

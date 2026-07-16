@@ -57,18 +57,18 @@ const readJsonBody = async (request) => {
   return JSON.parse(body);
 };
 
-const creators = (count, start = 0) =>
+const creators = (count, start = 0, similarityScore = 0.9) =>
   Array.from({ length: count }, (_, offset) => {
     const id = start + offset;
     return {
       username: `Creator ${id}`,
       platform: 'youtube',
       platformHandle: `@creator${id}`,
-      description: '',
+      description: `Detailed AI creator profile ${id}`,
       email: '',
       profileUrl: `https://www.youtube.com/@creator${id}`,
       avatar: '',
-      similarityScore: 0.9,
+      similarityScore,
       channelId: `UC-${id}`,
       channelTitle: `Creator ${id}`,
     };
@@ -235,6 +235,45 @@ test('bounded discovery clips continuation work and stops at the quota cap', asy
   }
 });
 
+test('bounded discovery globally reranks continuations and supports compact output', async () => {
+  let requestCount = 0;
+  const server = await startServer(async (request, response) => {
+    const body = await readJsonBody(request);
+    requestCount += 1;
+    const data = requestCount === 1
+      ? creators(2, 0, 0.8)
+      : [{
+          ...creators(1, 2, 0.99)[0],
+          description: 'x'.repeat(300),
+          contentVerticals: Array.from({ length: 10 }, () => 'v'.repeat(100)),
+          contentFormats: Array.from({ length: 10 }, () => 'f'.repeat(100)),
+        }];
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(discoverSuccess(body, data, requestCount)));
+  });
+
+  try {
+    const result = await runScript(DISCOVER_BOUNDED, {
+      platform: 'youtube',
+      contentDirection: 'AI tool creators',
+      limit: 3,
+      maxQuotaCost: 3,
+      outputFormat: 'compact',
+    }, server.origin);
+    assert.equal(result.code, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.data.outputFormat, 'compact');
+    assert.equal(output.data.data[0].platformHandle, '@creator2');
+    assert.equal(output.data.data[0].contentSummary.length, 180);
+    assert.equal(output.data.data[0].contentVerticals.length, 4);
+    assert.equal(output.data.data[0].contentVerticals[0].length, 60);
+    assert.equal(output.data.data[0].contentFormats.length, 4);
+    assert.equal('description' in output.data.data[0], false);
+  } finally {
+    await server.close();
+  }
+});
+
 test('email batch completes 50 lookups with three-request bounded concurrency', async () => {
   let requestCount = 0;
   let active = 0;
@@ -310,6 +349,7 @@ test('email batch canonicalizes and deduplicates URLs before charging', async ()
         'https://m.instagram.com/example/?hl=en',
       ],
       maxQuotaCost: 2,
+      outputFormat: 'compact',
     }, server.origin);
     assert.equal(result.code, 0, result.stderr);
     const output = JSON.parse(result.stdout);
@@ -318,6 +358,41 @@ test('email batch canonicalizes and deduplicates URLs before charging', async ()
     assert.equal(output.data.uniqueCount, 1);
     assert.equal(output.data.duplicateCount, 2);
     assert.equal(output.data.chargedQuota, 2);
+    assert.equal(output.data.outputFormat, 'compact');
+    assert.equal(output.data.results[0].quotaCost, 2);
+    assert.equal('quota' in output.data.results[0], false);
+  } finally {
+    await server.close();
+  }
+});
+
+test('bounded scripts reject unsupported output formats before charging', async () => {
+  let requestCount = 0;
+  const server = await startServer((_request, response) => {
+    requestCount += 1;
+    response.end();
+  });
+
+  try {
+    for (const [script, input] of [
+      [DISCOVER_BOUNDED, {
+        platform: 'youtube',
+        contentDirection: 'AI tools',
+        limit: 3,
+        maxQuotaCost: 1,
+        outputFormat: 'csv',
+      }],
+      [LOOKUP_BATCH, {
+        urls: ['https://www.tiktok.com/@creator'],
+        maxQuotaCost: 1,
+        outputFormat: 'csv',
+      }],
+    ]) {
+      const result = await runScript(script, input, server.origin);
+      assert.equal(result.code, 1);
+      assert.equal(JSON.parse(result.stderr).requestSent, false);
+    }
+    assert.equal(requestCount, 0);
   } finally {
     await server.close();
   }
