@@ -17,6 +17,7 @@ import {
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SETUP_SCRIPT = resolve(ROOT, 'packages/setup/bin/setup.mjs');
+const SETUP_PACKAGE = resolve(ROOT, 'packages/setup/package.json');
 const TEST_API_KEY = `waveInflu_${'A'.repeat(40)}`;
 const REPLACEMENT_API_KEY = `waveInflu_${'B'.repeat(40)}`;
 
@@ -72,6 +73,13 @@ test('setup argument parsing stays small and explicit', () => {
   assert.throws(() => parseArguments(['--agent', 'codex & whoami']), /unsupported characters/);
   assert.throws(() => parseArguments(['--unknown']), /Unknown option/);
   assert.throws(() => parseArguments(['--status', '--reconfigure']), /cannot be combined/);
+});
+
+test('published package keeps its executable command', async () => {
+  const manifest = JSON.parse(await readFile(SETUP_PACKAGE, 'utf8'));
+  assert.equal(manifest.name, '@waveinflu/setup');
+  assert.equal(manifest.bin['waveinflu-setup'], 'bin/setup.mjs');
+  assert.equal(manifest.publishConfig.access, 'public');
 });
 
 test('hidden input disables terminal echo before printing the prompt', async () => {
